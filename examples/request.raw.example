@@ -1,0 +1,7 @@
+POST /api/login HTTP/1.1
+Host: example.com
+User-Agent: Mozilla/5.0
+Content-Type: application/json
+Cookie: session=abc
+
+{"username":"test@example.com","password":"change-me"}
