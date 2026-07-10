@@ -33,7 +33,7 @@ except ImportError:  # pragma: no cover
     print("    Install with: python -m pip install requests", file=sys.stderr)
     raise SystemExit(2)
 
-VERSION = "1.5.0"
+VERSION = "1.6.0"
 SIGNATURE = "immroa"
 
 ALLOWED_METHODS = {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "TRACE"}
@@ -964,6 +964,7 @@ def build_diff_parser() -> argparse.ArgumentParser:
         prog="forgrequest diff",
         description="Compare two saved HTTP responses or arbitrary files. This does not send network requests.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+        epilog="Special commands: forgrequest web --help | forgrequest diff --help",
     )
     parser.add_argument("left", help="First file")
     parser.add_argument("right", help="Second file")
@@ -980,6 +981,7 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
 
+    parser.add_argument("--version", action="store_true", help="Print version and exit.")
     parser.add_argument("-u", "--url", required=False, help="Target URL. Required unless --init-config, --raw-request, or --from-curl provides it.")
     parser.add_argument("-X", "--method", help="HTTP method: GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS, TRACE.")
     parser.add_argument("-A", "--user-agent", dest="user_agent", help="Custom User-Agent.")
@@ -1753,9 +1755,16 @@ def main(argv: Optional[list[str]] = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     if argv and argv[0] == "diff":
         return diff_files(argv[1:])
+    if argv and argv[0] == "web":
+        from .webui import run_web
+        return run_web(argv[1:])
 
     parser = build_parser()
     args = parser.parse_args(argv)
+
+    if args.version:
+        print(f"forgrequest {VERSION} :: signature {SIGNATURE}")
+        return 0
 
     if args.init_config:
         write_sample_config(args.config)

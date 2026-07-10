@@ -19,7 +19,7 @@ It is intentionally **not a crawler** and **not a vulnerability scanner**. It do
         ██║  ██║███████╗╚██████╔╝╚██████╔╝███████╗███████║   ██║   
         ╚═╝  ╚═╝╚══════╝ ╚══▀▀═╝  ╚═════╝ ╚══════╝╚══════╝   ╚═╝   
 
-             Forgery HTTP Request v1.5.0  ::  signature: immroa
+             Forgery HTTP Request v1.6.0  ::  signature: immroa
 ```
 
 When ANSI color is enabled, the logo is rendered with **one single cyan color** to keep terminal output stable and professional.
@@ -28,7 +28,15 @@ When ANSI color is enabled, the logo is rendered with **one single cyan color** 
 
 ---
 
-## What changed in v1.5.0
+## What changed in v1.6.0
+
+- Added a professional local Web Console with `forgrequest web`.
+- The Web Console exposes the same request-building features as the CLI: URL/method, headers, cookies, raw request replay, cURL import, body helpers, variables, modifiers, reports, cookie jar, redirect chain, exports, session evidence, and response diff.
+- Added `src/forgrequest/webui.py` using Python standard-library HTTP serving; no new runtime dependency is required.
+- Updated documentation to describe both CLI and Web Console workflows.
+- Kept the project boundary unchanged: ForgRequest is still a manual HTTP request replication client, not a crawler or scanner.
+
+## Capabilities retained from v1.5.0
 
 - Raw HTTP/1.1 request import and replay with `--raw-request`.
 - Import requests from cURL with `--from-curl`.
@@ -43,7 +51,6 @@ When ANSI color is enabled, the logo is rendered with **one single cyan color** 
 - Evidence/session export with `--save-session`.
 - Local file comparison command: `forgrequest diff file-a file-b`.
 - Improved redaction in prepared-request previews and reports.
-- Improved documentation in English.
 
 ---
 
@@ -55,23 +62,30 @@ ForgeryHttpRequest/
 ├── pyproject.toml                     # Optional package metadata / console script
 ├── requirements.txt                   # Python dependencies
 ├── README.md                          # Main documentation
+├── TEST_RESULTS.md                    # Local validation notes
 ├── config/
 │   └── forgrequest.config             # Default .config file
 ├── docs/
 │   └── README.md                      # Documentation copy
 ├── examples/
 │   ├── login_head.example.txt         # Header-file example
-│   └── payload.json                   # Payload-file example
+│   ├── payload.json                   # JSON payload example
+│   ├── request.raw.example            # Raw HTTP request replay example
+│   └── vars.env.example               # Template variable example
 ├── install/
+│   ├── README.md                      # Installer overview
 │   ├── linux/
+│   │   ├── README.md                  # Linux/macOS install notes
 │   │   └── install_linux.sh           # Linux/macOS installer
 │   └── windows/
-│       ├── install_windows.ps1        # Windows PowerShell installer
-│       └── install_windows.bat        # Windows BAT wrapper
+│       ├── README.md                  # Windows install notes
+│       ├── install_windows.cmd        # Recommended Windows installer wrapper
+│       └── install_windows.ps1        # PowerShell installer used by the CMD wrapper
 └── src/
     └── forgrequest/
         ├── __init__.py
-        └── cli.py                     # Main application code
+        ├── cli.py                     # Main CLI application code
+        └── webui.py                   # Local Web Console server and UI
 ```
 
 The root `forgrequest.py` keeps this command working from the project directory:
@@ -85,6 +99,8 @@ The installers create a global command named:
 ```bash
 forgrequest
 ```
+
+Installer-specific notes are documented in `install/README.md`, `install/linux/README.md`, and `install/windows/README.md`.
 
 ---
 
@@ -124,12 +140,7 @@ chmod +x install/linux/install_linux.sh
 ./install/linux/install_linux.sh
 ```
 
-You can also use the root convenience installer:
-
-```bash
-chmod +x install_linux.sh
-./install_linux.sh
-```
+Installers are stored only under the `install/` directory to avoid duplicate entry points.
 
 Default Linux/macOS paths:
 
@@ -153,17 +164,17 @@ Uninstall:
 
 ### Windows
 
-From PowerShell in the project root:
+From CMD in the project root, use the recommended wrapper:
+
+```cmd
+install\windows\install_windows.cmd
+```
+
+You can also run the underlying PowerShell script directly:
 
 ```powershell
 Set-ExecutionPolicy -Scope Process Bypass
 .\install\windows\install_windows.ps1
-```
-
-Or use the BAT wrapper:
-
-```cmd
-install\windows\install_windows.bat
 ```
 
 Default Windows paths:
@@ -178,8 +189,8 @@ Open a new terminal after installation if Windows does not immediately detect th
 
 Uninstall:
 
-```powershell
-.\install\windows\install_windows.ps1 -Uninstall
+```cmd
+install\windows\install_windows.cmd -Uninstall
 ```
 
 ---
@@ -197,6 +208,50 @@ Run after installation:
 ```bash
 forgrequest -u https://example.com --dry-run
 ```
+
+---
+
+## Web Console
+
+Launch the local browser-based interface:
+
+```bash
+forgrequest web
+```
+
+Default URL:
+
+```text
+http://127.0.0.1:7413/
+```
+
+Run from source:
+
+```bash
+python forgrequest.py web
+```
+
+Custom host, port, and artifact workspace:
+
+```bash
+forgrequest web --host 127.0.0.1 --port 7413 --workspace ~/.forgrequest/web-artifacts
+```
+
+Open the default browser automatically:
+
+```bash
+forgrequest web --open
+```
+
+The Web Console is a local operator UI for the same CLI engine. It includes panels for:
+
+- Request Builder: method, URL, headers, cookies, proxy, timeout, and body helpers.
+- Raw / cURL Replay: raw HTTP/1.1 request replay, cURL import, header-file simulation, and cookie-file simulation.
+- Modifiers: set/remove headers, cookies, query parameters, body replacements, and template variables.
+- Execution & Reports: dry-run, prepared request preview, redirect chain, cURL/Python export, config generation, config path selection, cookie jar, JSON report, HTML report, response body save, and session evidence export.
+- Response Diff: browser UI for the same `forgrequest diff` command.
+
+Security note: keep the Web Console bound to localhost. It can send HTTP requests from your machine and save artifacts to the configured workspace. Do not expose it on a public interface.
 
 POST with a JSON payload file:
 
@@ -542,7 +597,7 @@ Sample config:
 ```ini
 [request]
 method = GET
-user_agent = ForgeryHTTP/1.5.0 (immroa)
+user_agent = ForgeryHTTP/1.6.0 (immroa)
 timeout = 30
 follow_redirects = true
 verify_tls = true
@@ -584,6 +639,19 @@ Priority order:
 
 ---
 
+## Web Console arguments
+
+`forgrequest web` starts the local Web Console.
+
+| Argument | Description |
+|---|---|
+| `--host` | Bind host. Defaults to `127.0.0.1`. |
+| `--port` | Bind port. Defaults to `7413`. |
+| `--workspace` | Directory where web-generated request files, reports, response bodies, and session artifacts are stored. |
+| `--open` | Open the Web Console in the default browser after startup. |
+
+---
+
 ## Main arguments
 
 ### Target and method
@@ -595,6 +663,7 @@ Priority order:
 | `--raw-request` | Load a raw HTTP/1.1 request from file. |
 | `--raw-scheme` | Scheme used for raw requests with relative targets. |
 | `--from-curl` | Import a cURL command string or file. |
+| `--version` | Print the current version and exit. |
 
 ### Headers, cookies, and query
 
@@ -729,6 +798,7 @@ forgrequest -u https://example.com/api -o partial-response.bin
 - Avoid `--insecure` outside controlled labs.
 - Prefer payload/header/cookie files for repeatable testing.
 - Use `--no-env-proxy` when you need predictable behavior independent of environment proxy variables.
+- Keep the Web Console bound to `127.0.0.1` unless you deliberately need another bind address in a controlled lab.
 - Keep bug bounty proof-of-concept requests minimal, traceable, and within scope.
 
 ---
@@ -747,6 +817,20 @@ Windows: open a new terminal after installation, or check that this directory is
 
 ```text
 %LOCALAPPDATA%\Programs\forgrequest
+```
+
+### Web Console does not open
+
+Start it manually and open the printed URL:
+
+```bash
+forgrequest web --host 127.0.0.1 --port 7413
+```
+
+If the port is already in use, choose another port:
+
+```bash
+forgrequest web --port 7420
 ```
 
 ### `ModuleNotFoundError: No module named requests`

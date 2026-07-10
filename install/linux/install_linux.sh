@@ -68,7 +68,8 @@ fi
 
 cat > "$WRAPPER" <<EOF
 #!/usr/bin/env bash
-exec "$PYTHON_BIN" "$INSTALL_DIR/forgrequest.py" -c "$CONFIG_DIR/forgrequest.config" "\$@"
+export FORGREQUEST_CONFIG="$CONFIG_DIR/forgrequest.config"
+exec "$PYTHON_BIN" "$INSTALL_DIR/forgrequest.py" "\$@"
 EOF
 chmod +x "$WRAPPER"
 

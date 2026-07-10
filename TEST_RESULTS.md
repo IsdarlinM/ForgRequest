@@ -1,50 +1,149 @@
-# ForgRequest validation results
+# ForgRequest v1.6.0 validation results
 
-Environment used for validation:
+Validation date: 2026-07-10
+Environment available for execution: Linux container with Python 3.13.
 
-- Linux container
-- Python 3.13 runtime available in the execution environment
-- Dependency: `requests`
+## Scope
 
-Validation performed:
+The validation focused on the project boundary documented in the README: ForgRequest is a manual HTTP client for request replay, request modification, response observation, reporting, and local diff. It is not a crawler and not a vulnerability scanner.
 
-1. Python syntax compilation for:
-   - `src/forgrequest/cli.py`
-   - `src/forgrequest/__init__.py`
-   - `forgrequest.py`
-2. CLI help validation with `python forgrequest.py --help`.
-3. Dry-run validation for:
-   - basic request preparation
-   - variable substitution with `--vars-file`
-   - sensitive header redaction
-   - raw HTTP request import with `--raw-request`
-   - cookie removal from imported raw requests
-   - query parameter modification
-   - prepared raw request export
-   - cURL export
-   - Python `requests` export
-   - JSON report generation
-   - HTML report generation
-   - session artifact generation
-   - cURL import with `--from-curl`
-   - local diff command with `forgrequest diff`
-4. Live local HTTP server validation for:
-   - GET response rendering
-   - response headers with `--include`
-   - redirect chain with `--show-redirect-chain`
-   - cookie jar save/load with `--cookie-jar`
-   - JSON POST helper with `--json`
-   - multipart POST helper with `--multipart`
-   - HEAD request handling
-   - JSON/HTML report creation
-   - session artifact creation
-5. Linux installer validation using an isolated temporary `HOME`:
-   - install
-   - wrapper command execution
-   - dry-run through installed command
-   - uninstall
+## CLI validation
 
-Windows installer note:
+Validated successfully:
 
-- The Windows PowerShell/BAT installer files were statically reviewed and updated.
-- They were not executed because the validation environment is Linux-only.
+- Python bytecode compilation:
+  - `src/forgrequest/cli.py`
+  - `src/forgrequest/webui.py`
+  - `forgrequest.py`
+- Startup and command help:
+  - `python forgrequest.py --version`
+  - `python forgrequest.py --help`
+  - `python forgrequest.py diff --help`
+  - `python forgrequest.py web --help`
+- Config generation:
+  - `python forgrequest.py --init-config -c ./new.config`
+- HTTP method handling against a local controlled HTTP server:
+  - `GET`
+  - `POST`
+  - `PUT`
+  - `PATCH`
+  - `DELETE`
+  - `HEAD`
+  - `OPTIONS`
+  - `TRACE`
+- Request building and modification:
+  - `--headers`
+  - `--headers-file`
+  - `--set-header`
+  - `--remove-header`
+  - `--cookies`
+  - `--cookies-file`
+  - `--load-cookies`
+  - `--save-cookies`
+  - `--cookie-jar`
+  - `--set-cookie`
+  - `--remove-cookie`
+  - `--set-query`
+  - `--remove-query`
+- Body helpers:
+  - `--payload`
+  - `--payload-file`
+  - `--json`
+  - `--json-file`
+  - `--form`
+  - `--form-file`
+  - `--binary-file`
+  - `--multipart`
+  - `--replace-body`
+- Replay/import/export:
+  - `--raw-request`
+  - `--raw-scheme`
+  - `--from-curl`
+  - `--export-curl`
+  - `--export-python`
+  - `--save-prepared-request`
+- Execution controls:
+  - `--timeout`
+  - `--no-redirects`
+  - `--show-redirect-chain`
+  - `--insecure` argument parsing
+  - `--proxy` argument parsing
+  - `--no-env-proxy`
+  - `--include`
+  - `--show-request`
+  - `--dry-run`
+  - `--raw`
+  - `--no-logo`
+  - `--no-color`
+- Reports and artifacts:
+  - `--output`
+  - `--report-json`
+  - `--report-html`
+  - `--save-session`
+  - `--no-redact-reports`
+- Diff command:
+  - equal files return `0`
+  - different files return `3`
+  - `--json`
+  - `--no-body-diff`
+  - `--context`
+
+## Web Console validation
+
+Validated successfully:
+
+- `python forgrequest.py web --help`
+- Local Web Console startup on `127.0.0.1` with a temporary workspace.
+- `GET /api/info` returned version `1.6.0` and signature metadata.
+- `GET /` returned the full HTML/CSS/JavaScript interface.
+- UI markup contains the expected panels:
+  - Request Builder
+  - Raw / cURL Replay
+  - Modifiers
+  - Execution & Reports
+  - Response Diff
+  - Feature Map
+- Web request execution through `POST /api/run`:
+  - builder mode with JSON body
+  - raw request mode
+  - cURL import mode
+  - report JSON artifact generation
+  - report HTML artifact generation
+  - cURL export output
+  - Python export output
+- Web diff execution through `POST /api/diff`:
+  - different text returned exit code `3`
+  - unified diff output was returned
+  - diff JSON artifact was generated
+- Web config generation:
+  - `initConfig` created a `forgrequest.generated.config` artifact.
+
+## Installer validation
+
+Linux/macOS installer validated successfully in a temporary HOME:
+
+- `install/linux/install_linux.sh`
+- global wrapper creation under `~/.local/bin/forgrequest`
+- wrapper version command:
+  - `forgrequest --version`
+- wrapper subcommands after installer fix:
+  - `forgrequest web --help`
+  - `forgrequest diff --help`
+- Linux uninstall:
+  - `install/linux/install_linux.sh --uninstall`
+
+Windows installer files were reviewed statically in the Linux environment:
+
+- `install/windows/install_windows.cmd`
+- `install/windows/install_windows.ps1`
+
+The Windows wrapper now uses `FORGREQUEST_CONFIG` instead of injecting `-c` before user arguments. This preserves subcommand compatibility for:
+
+- `forgrequest web ...`
+- `forgrequest diff ...`
+
+## Notes
+
+- No crawler, scanner, fuzzing, brute force, or automatic vulnerability testing was added.
+- The Web Console is intentionally local-first and binds to `127.0.0.1` by default.
+- A Chromium headless screenshot attempt was made in the container, but Chromium did not complete screenshot capture in this environment. The Web Console was still validated through HTTP, API responses, generated artifacts, and HTML/CSS/JavaScript inspection.

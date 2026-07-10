@@ -100,7 +100,8 @@ $cmd = Get-PythonCommand
 $PyPrefix = ($cmd -join " ")
 $Wrapper = @"
 @echo off
-$PyPrefix "%~dp0forgrequest.py" -c "%~dp0forgrequest.config" %*
+set "FORGREQUEST_CONFIG=%~dp0forgrequest.config"
+$PyPrefix "%~dp0forgrequest.py" %*
 "@
 Set-Content -Path $WrapperPath -Value $Wrapper -Encoding ASCII
 
