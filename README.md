@@ -19,7 +19,7 @@ It is intentionally **not a crawler** and **not a vulnerability scanner**. It do
         ██║  ██║███████╗╚██████╔╝╚██████╔╝███████╗███████║   ██║   
         ╚═╝  ╚═╝╚══════╝ ╚══▀▀═╝  ╚═════╝ ╚══════╝╚══════╝   ╚═╝   
 
-             Forgery HTTP Request v1.6.0  ::  signature: immroa
+             Forgery HTTP Request v1.6.0  ::  signature: imr
 ```
 
 When ANSI color is enabled, the logo is rendered with **one single cyan color** to keep terminal output stable and professional.
@@ -79,8 +79,7 @@ ForgeryHttpRequest/
 │   │   └── install_linux.sh           # Linux/macOS installer
 │   └── windows/
 │       ├── README.md                  # Windows install notes
-│       ├── install_windows.cmd        # Recommended Windows installer wrapper
-│       └── install_windows.ps1        # PowerShell installer used by the CMD wrapper
+│       └── install_windows.cmd        # Windows CMD installer
 └── src/
     └── forgrequest/
         ├── __init__.py
@@ -150,11 +149,13 @@ Config:      ~/.config/forgrequest/forgrequest.config
 Command:     ~/.local/bin/forgrequest
 ```
 
-If `~/.local/bin` is not in your `PATH`, add it:
+The installer automatically appends the required PATH export to common shell startup files when it is missing:
 
 ```bash
 export PATH="$HOME/.local/bin:$PATH"
 ```
+
+Open a new terminal if your current parent shell does not immediately recognize `forgrequest`.
 
 Uninstall:
 
@@ -164,18 +165,13 @@ Uninstall:
 
 ### Windows
 
-From CMD in the project root, use the recommended wrapper:
+From CMD in the project root, run the Windows CMD installer:
 
 ```cmd
 install\windows\install_windows.cmd
 ```
 
-You can also run the underlying PowerShell script directly:
-
-```powershell
-Set-ExecutionPolicy -Scope Process Bypass
-.\install\windows\install_windows.ps1
-```
+No PowerShell installer is required or shipped. The `.cmd` installer performs the installation and updates the user environment variables.
 
 Default Windows paths:
 
@@ -185,12 +181,12 @@ Config:      %LOCALAPPDATA%\Programs\forgrequest\forgrequest.config
 Command:     forgrequest.cmd, available as forgrequest after PATH update
 ```
 
-Open a new terminal after installation if Windows does not immediately detect the new command.
+The installer updates the user PATH and sets `FORGREQUEST_CONFIG`. Open a new terminal after installation if an already-open terminal does not immediately detect the new command.
 
 Uninstall:
 
 ```cmd
-install\windows\install_windows.cmd -Uninstall
+install\windows\install_windows.cmd --uninstall
 ```
 
 ---
@@ -243,7 +239,7 @@ Open the default browser automatically:
 forgrequest web --open
 ```
 
-The Web Console is a local operator UI for the same CLI engine. It includes panels for:
+The Web Console is a local operator UI for the same CLI engine. Its form controls are normalized as full-width responsive fields so inputs, selects, and text areas keep consistent horizontal sizing across all panels. It includes panels for:
 
 - Request Builder: method, URL, headers, cookies, proxy, timeout, and body helpers.
 - Raw / cURL Replay: raw HTTP/1.1 request replay, cURL import, header-file simulation, and cookie-file simulation.
@@ -278,7 +274,7 @@ Header file example:
 
 ```text
 User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36
-X-Bug-Bounty: H1-immroa
+X-Bug-Bounty: H1-imr
 ```
 
 The header parser safely supports semicolons inside values such as `User-Agent` and only splits semicolon-separated headers when the next segment looks like another valid header name.
@@ -597,7 +593,7 @@ Sample config:
 ```ini
 [request]
 method = GET
-user_agent = ForgeryHTTP/1.6.0 (immroa)
+user_agent = ForgeryHTTP/1.6.0 (imr)
 timeout = 30
 follow_redirects = true
 verify_tls = true
@@ -807,13 +803,13 @@ forgrequest -u https://example.com/api -o partial-response.bin
 
 ### `forgrequest: command not found`
 
-Linux/macOS:
+Linux/macOS: the installer writes the required PATH export automatically. Open a new terminal after installation if needed. The configured line is:
 
 ```bash
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
-Windows: open a new terminal after installation, or check that this directory is in the user PATH:
+Windows: the `.cmd` installer updates the user PATH automatically. Open a new terminal after installation, or check that this directory is in the user PATH:
 
 ```text
 %LOCALAPPDATA%\Programs\forgrequest
@@ -847,7 +843,7 @@ Use one header per line in a file:
 
 ```text
 User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36
-X-Bug-Bounty: H1-immroa
+X-Bug-Bounty: H1-imr
 ```
 
 This format is supported and semicolons inside the `User-Agent` value are preserved.

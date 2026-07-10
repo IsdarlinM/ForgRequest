@@ -132,12 +132,11 @@ Linux/macOS installer validated successfully in a temporary HOME:
 - Linux uninstall:
   - `install/linux/install_linux.sh --uninstall`
 
-Windows installer files were reviewed statically in the Linux environment:
+Windows installer file was reviewed statically in the Linux environment:
 
 - `install/windows/install_windows.cmd`
-- `install/windows/install_windows.ps1`
 
-The Windows wrapper now uses `FORGREQUEST_CONFIG` instead of injecting `-c` before user arguments. This preserves subcommand compatibility for:
+The Windows CMD installer now performs the full installation directly, creates the wrapper, updates the user PATH, and sets `FORGREQUEST_CONFIG`. The wrapper uses `FORGREQUEST_CONFIG` instead of injecting `-c` before user arguments, preserving subcommand compatibility for:
 
 - `forgrequest web ...`
 - `forgrequest diff ...`
@@ -146,4 +145,38 @@ The Windows wrapper now uses `FORGREQUEST_CONFIG` instead of injecting `-c` befo
 
 - No crawler, scanner, fuzzing, brute force, or automatic vulnerability testing was added.
 - The Web Console is intentionally local-first and binds to `127.0.0.1` by default.
-- A Chromium headless screenshot attempt was made in the container, but Chromium did not complete screenshot capture in this environment. The Web Console was still validated through HTTP, API responses, generated artifacts, and HTML/CSS/JavaScript inspection.
+- Screenshots are intentionally not included in the deliverable. The Web Console was validated through HTTP, API responses, generated artifacts, and HTML/CSS/JavaScript inspection.
+
+## Signature rename validation
+
+Validated after signature rename:
+
+- Replaced every text occurrence of the previous signature with `imr`.
+- Confirmed no remaining references to the previous signature in project text files.
+- Re-ran Python compilation for `src` and `forgrequest.py`.
+- Validated `python forgrequest.py --version` returns `signature imr`.
+- Validated `--help`, `web --help`, `diff --help`, and `--dry-run` still work.
+
+## Web UI input normalization validation
+
+Validated after Web Console field-width normalization:
+
+- Updated the Web Console CSS so `input`, `select`, and `textarea` elements use full-width responsive sizing.
+- Added explicit `min-width:0`, `max-width:100%`, normalized heights, and responsive grid behavior to prevent narrow or visually inconsistent controls.
+- Added a global `.span9` grid utility used by the Raw / cURL Replay panel, fixing the narrow raw request text area.
+- Expanded the Target and Network cards so method, URL, timeout, and proxy fields have consistent professional width.
+- Verified visible form controls in each panel with DOM/CSS inspection.
+- Removed screenshot artifacts from the deliverable because they are not required.
+- Re-ran Python compilation and core CLI/Web help commands.
+
+## Installer environment variable validation
+
+Validated after installer updates:
+
+- Removed the Windows PowerShell installer from the project.
+- Kept Windows installation through `install/windows/install_windows.cmd` only.
+- Updated the Windows CMD installer to persist the user PATH with `reg add HKCU\Environment /v Path ...`.
+- Updated the Windows CMD installer to set `FORGREQUEST_CONFIG` at user level.
+- Updated the Linux installer to append `export PATH="$HOME/.local/bin:$PATH"` to common shell startup files when missing.
+- Confirmed the Linux installer validates the PATH-resolved `forgrequest --help` command after installation.
+- Re-ran Linux installation and uninstall in a temporary HOME.

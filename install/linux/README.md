@@ -1,13 +1,13 @@
-# Linux/macOS installer
+# Linux/macOS installation
 
-Run from the project root:
+From the project root:
 
 ```bash
 chmod +x install/linux/install_linux.sh
 ./install/linux/install_linux.sh
 ```
 
-Default paths:
+Installed paths:
 
 ```text
 Application: ~/.local/share/forgrequest
@@ -15,22 +15,16 @@ Config:      ~/.config/forgrequest/forgrequest.config
 Command:     ~/.local/bin/forgrequest
 ```
 
-Uninstall:
-
-```bash
-./install/linux/install_linux.sh --uninstall
-```
-
-If `~/.local/bin` is not in your `PATH`, add it to your shell profile:
+The installer automatically adds the following line to common shell startup files when it is missing:
 
 ```bash
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
-After installation, the same command exposes all modes:
+Open a new terminal after installation if your current shell does not immediately see the command.
+
+Uninstall:
 
 ```bash
-forgrequest --version
-forgrequest web --help
-forgrequest diff --help
+./install/linux/install_linux.sh --uninstall
 ```

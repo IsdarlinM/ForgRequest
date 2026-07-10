@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 Forgery HTTP Request - advanced HTTP client for authorized request replay.
-Signature: immroa
+Signature: imr
 
 Design boundary: this is not a crawler or vulnerability scanner. It prepares,
 modifies, replays, compares, and records HTTP requests/responses for manual,
@@ -34,7 +34,7 @@ except ImportError:  # pragma: no cover
     raise SystemExit(2)
 
 VERSION = "1.6.0"
-SIGNATURE = "immroa"
+SIGNATURE = "imr"
 
 ALLOWED_METHODS = {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "TRACE"}
 COLOR_MODES = {"auto", "always", "never"}

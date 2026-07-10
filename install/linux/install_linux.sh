@@ -25,6 +25,32 @@ resolve_project_root() {
   exit 1
 }
 
+ensure_shell_path() {
+  local export_line='export PATH="$HOME/.local/bin:$PATH"'
+  local files=()
+
+  # ~/.profile is used by many login shells. ~/.bashrc and ~/.zshrc cover common interactive shells.
+  files+=("$HOME/.profile")
+  [[ -f "$HOME/.bashrc" ]] && files+=("$HOME/.bashrc")
+  [[ -f "$HOME/.zshrc" ]] && files+=("$HOME/.zshrc")
+
+  for rc_file in "${files[@]}"; do
+    mkdir -p "$(dirname "$rc_file")"
+    touch "$rc_file"
+    if ! grep -Fq 'export PATH="$HOME/.local/bin:$PATH"' "$rc_file"; then
+      {
+        echo ""
+        echo "# Added by ForgRequest installer"
+        echo "$export_line"
+      } >> "$rc_file"
+      echo "[+] Added PATH update to: $rc_file"
+    fi
+  done
+
+  # Make the command available to child processes launched by this installer.
+  export PATH="$BIN_DIR:$PATH"
+}
+
 PROJECT_ROOT="$(resolve_project_root)"
 
 if [[ "${1:-}" == "--uninstall" ]]; then
@@ -66,30 +92,31 @@ if ! "$PYTHON_BIN" -c "import requests" >/dev/null 2>&1; then
   "$PYTHON_BIN" -m pip install --user -r "$INSTALL_DIR/requirements.txt"
 fi
 
-cat > "$WRAPPER" <<EOF
+cat > "$WRAPPER" <<EOF_WRAPPER
 #!/usr/bin/env bash
 export FORGREQUEST_CONFIG="$CONFIG_DIR/forgrequest.config"
 exec "$PYTHON_BIN" "$INSTALL_DIR/forgrequest.py" "\$@"
-EOF
+EOF_WRAPPER
 chmod +x "$WRAPPER"
+
+ensure_shell_path
 
 if ! "$WRAPPER" --help >/dev/null 2>&1; then
   echo "[!] Installation completed, but the command test failed." >&2
   exit 1
 fi
 
+# Also verify the PATH-resolved command from this installer process.
+if ! forgrequest --help >/dev/null 2>&1; then
+  echo "[!] PATH was configured, but command lookup failed in this installer process." >&2
+  exit 1
+fi
+
 echo "[+] Installed successfully."
-echo "[+] Command: $WRAPPER"
+echo "[+] Command: forgrequest"
+echo "[+] Wrapper: $WRAPPER"
 echo "[+] Install dir: $INSTALL_DIR"
 echo "[+] Config:  $CONFIG_DIR/forgrequest.config"
-
-case ":$PATH:" in
-  *":$BIN_DIR:"*) ;;
-  *)
-    echo "[!] $BIN_DIR does not appear to be in your current PATH."
-    echo "    Add this line to ~/.bashrc, ~/.zshrc, or your equivalent shell config:"
-    echo "    export PATH=\"$BIN_DIR:\$PATH\""
-    ;;
-esac
-
+echo "[+] PATH configured with: export PATH=\"$HOME/.local/bin:\$PATH\""
+echo "[+] Open a new terminal if the current parent shell does not immediately see the command."
 echo "[+] Test: forgrequest -u https://example.com --dry-run --no-logo"

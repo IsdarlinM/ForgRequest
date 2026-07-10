@@ -1,38 +1,23 @@
-# Windows installer
+# Windows installation
 
-Run from the project root using CMD:
+From Command Prompt in the project root:
 
 ```cmd
 install\windows\install_windows.cmd
 ```
 
-You can also run the underlying PowerShell script directly:
-
-```powershell
-Set-ExecutionPolicy -Scope Process Bypass
-.\install\windows\install_windows.ps1
-```
-
-Default paths:
+Installed paths:
 
 ```text
 Application: %LOCALAPPDATA%\Programs\forgrequest
 Config:      %LOCALAPPDATA%\Programs\forgrequest\forgrequest.config
-Command:     forgrequest.cmd, available as forgrequest after PATH update
+Command:     %LOCALAPPDATA%\Programs\forgrequest\forgrequest.cmd
 ```
+
+The `.cmd` installer updates the user PATH using Windows environment variables and also sets `FORGREQUEST_CONFIG`. Open a new terminal after installation if an already-open terminal does not immediately recognize `forgrequest`.
 
 Uninstall:
 
 ```cmd
-install\windows\install_windows.cmd -Uninstall
-```
-
-Open a new terminal after installation if Windows does not immediately detect the updated PATH.
-
-After installation, the same command exposes all modes:
-
-```bash
-forgrequest --version
-forgrequest web --help
-forgrequest diff --help
+install\windows\install_windows.cmd --uninstall
 ```
