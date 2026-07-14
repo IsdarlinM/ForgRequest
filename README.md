@@ -30,11 +30,10 @@ When ANSI color is enabled, the logo is rendered with **one single cyan color** 
 
 ## What changed in v1.7.2
 
-- Made the primary **Run request** action immediately visible from every Web Console panel.
-- Added a persistent Run request button to the sticky top navigation and a prominent quick-action button to the sidebar.
+- Keep a single persistent **Run request** button in the sticky top navigation, next to the version indicator.
 - Redesigned the execution action card with stronger visual hierarchy and clearer Preview/Reset secondary actions.
 - Added `Ctrl+Enter` and `Cmd+Enter` keyboard shortcuts to run the current request from any input field.
-- Added shared running/disabled states across all Run request controls to prevent duplicate submissions.
+- Added a running/disabled state to the persistent Run request control to prevent duplicate submissions.
 - Improved responsive behavior so the primary action remains easy to reach on desktop, tablet, and mobile layouts.
 - Automatically brings the execution console into view after a request finishes or a Web Console error occurs.
 
@@ -358,7 +357,7 @@ The Web Console is a local operator UI for the same CLI engine. It includes pane
 - Execution & Reports: dry-run, prepared request preview, redirect chain, cURL/Python export, config generation, config path selection, cookie jar, JSON report, HTML report, response body save, and session evidence export.
 - Response Diff: browser UI for the same `forgrequest diff` command.
 
-The primary **Run request** action is available from the sticky top navigation, the sidebar, and the Execution & Reports panel. Press `Ctrl+Enter` on Windows/Linux or `Cmd+Enter` on macOS to execute the current request from any input field. All Run request controls share the same busy state to prevent accidental duplicate submissions.
+The primary **Run request** action is available as a single persistent button in the sticky top navigation, next to the version indicator. Press `Ctrl+Enter` on Windows/Linux or `Cmd+Enter` on macOS to execute the current request from any input field. The button enters a busy state to prevent accidental duplicate submissions.
 
 Security note: keep the Web Console bound to localhost. It can send HTTP requests from your machine and save artifacts to the configured workspace. Do not expose it on a public interface.
 

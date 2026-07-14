@@ -58,13 +58,12 @@ The Web Console was started locally and validated through HTTP requests:
 
 ## Web primary-action visibility and interaction
 
-- Confirmed the sticky top navigation contains a visible `Run request` button.
-- Confirmed the sidebar contains a prominent full-width `Run request` quick action.
+- Confirmed the sticky top navigation contains the only visible `Run request` button, next to the version indicator.
 - Confirmed the Execution & Reports panel retains a redesigned primary action card.
 - Confirmed desktop rendering at `1440x900`: the header action is fully inside the viewport and the sidebar action is visible without navigation.
 - Confirmed mobile rendering at `390x844`: the header action remains fully visible and the sidebar action expands to the available width.
 - Confirmed the sidebar quick action submits the request form.
 - Confirmed `Ctrl+Enter` submits the current request form.
-- Confirmed all Run request controls enter a shared disabled/running state during execution.
+- Confirmed the single top-right Run request control enters a disabled/running state during execution.
 - Confirmed the Web API executed a local controlled request and returned HTTP 200 with exit code `0`.
 - No UI screenshots are included in the deliverable.
