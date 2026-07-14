@@ -33,7 +33,7 @@ except ImportError:  # pragma: no cover
     print("    Install with: python -m pip install requests", file=sys.stderr)
     raise SystemExit(2)
 
-VERSION = "1.6.0"
+VERSION = "1.7.2"
 SIGNATURE = "imr"
 
 ALLOWED_METHODS = {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "TRACE"}
@@ -218,6 +218,11 @@ class ExecutionResult:
     request_curl: str
     request_python: str
 
+
+
+
+class HelpFormatter(argparse.ArgumentDefaultsHelpFormatter, argparse.RawDescriptionHelpFormatter):
+    """Show default values while preserving explicit help layout and examples."""
 
 def die(message: str, code: int = 1) -> None:
     print(f"[!] {message}", file=sys.stderr)
@@ -964,7 +969,7 @@ def build_diff_parser() -> argparse.ArgumentParser:
         prog="forgrequest diff",
         description="Compare two saved HTTP responses or arbitrary files. This does not send network requests.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-        epilog="Special commands: forgrequest web --help | forgrequest diff --help",
+        epilog="Special commands: forgrequest web --help | forgrequest diff --help | forgrequest update --help",
     )
     parser.add_argument("left", help="First file")
     parser.add_argument("right", help="Second file")
@@ -977,76 +982,119 @@ def build_diff_parser() -> argparse.ArgumentParser:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="forgrequest",
-        description="Forgery HTTP Request: HTTP client for authorized request replay and manual endpoint validation.",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+        description=(
+            "Forgery HTTP Request: HTTP client for authorized request replay, "
+            "request modification, response viewing, local diffing, web operation, and safe updates.\n\n"
+            "Boundary: ForgRequest is not a crawler and not a vulnerability scanner. "
+            "It works on individual operator-supplied requests."
+        ),
+        formatter_class=HelpFormatter,
+        epilog=(
+            "Command-specific help:\n"
+            "  forgrequest web --help       Start and configure the local Web Console\n"
+            "  forgrequest diff --help      Compare two saved responses or arbitrary files\n"
+            "  forgrequest update --help    Safely update an installed/source-tree copy\n\n"
+            "Common examples:\n"
+            "  forgrequest -u https://example.com --dry-run --show-request\n"
+            "  forgrequest -u https://example.com/api -X POST --json-file payload.json --include\n"
+            "  forgrequest --raw-request request.raw --show-request\n"
+            "  forgrequest --from-curl curl.txt --export-python\n"
+            "  forgrequest -u https://example.com --save-session case-001/ --report-html report.html\n"
+            "  forgrequest web --open\n"
+            "  forgrequest diff response-a.txt response-b.txt --json diff.json\n"
+            "  forgrequest update --dry-run\n        "
+        ),
     )
 
-    parser.add_argument("--version", action="store_true", help="Print version and exit.")
-    parser.add_argument("-u", "--url", required=False, help="Target URL. Required unless --init-config, --raw-request, or --from-curl provides it.")
-    parser.add_argument("-X", "--method", help="HTTP method: GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS, TRACE.")
-    parser.add_argument("-A", "--user-agent", dest="user_agent", help="Custom User-Agent.")
+    subparsers = parser.add_subparsers(
+        title="commands",
+        metavar="<command>",
+        dest="command",
+        help="Run 'forgrequest <command> --help' for command-specific options.",
+    )
+    subparsers.add_parser("web", help="Start the local Web Console with full CLI workflow coverage.", add_help=False)
+    subparsers.add_parser("diff", help="Compare two saved HTTP responses or arbitrary files.", add_help=False)
+    subparsers.add_parser("update", help="Safely update ForgRequest from GitHub or a local ZIP.", add_help=False)
 
-    parser.add_argument("--raw-request", help="Load a raw HTTP/1.1 request from file and replay it.")
-    parser.add_argument("--raw-scheme", choices=["http", "https"], default="https", help="Scheme used when --raw-request has a relative target.")
-    parser.add_argument("--from-curl", help="Import a curl command string or a file containing a curl command.")
+    general = parser.add_argument_group("general")
+    general.add_argument("--version", action="store_true", help="Print version and exit.")
+    general.add_argument("-c", "--config", default=DEFAULT_CONFIG_FILE, help="Default .config configuration file.")
+    general.add_argument("--init-config", action="store_true", help="Create a base configuration file and exit.")
 
-    parser.add_argument("-H", "--headers", action="append", help="Headers as string. Repeatable. Example: -H 'X-Test: 1'")
-    parser.add_argument("--headers-file", help="Headers file: JSON, lines like 'Header: value', or curl -H fragments.")
-    parser.add_argument("--set-header", action="append", default=[], help="Set/replace a header after all other sources. Repeatable.")
-    parser.add_argument("--remove-header", action="append", default=[], help="Remove a header by name after all other sources. Repeatable.")
+    target = parser.add_argument_group("target and method")
+    target.add_argument("-u", "--url", required=False, help="Target URL. Required unless --init-config, --raw-request, or --from-curl provides it.")
+    target.add_argument("-X", "--method", help="HTTP method: GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS, TRACE.")
+    target.add_argument("-A", "--user-agent", dest="user_agent", help="Custom User-Agent.")
 
-    parser.add_argument("-b", "--cookies", action="append", help="Cookies as string. Repeatable. Example: -b 'a=b; c=d'")
-    parser.add_argument("--cookies-file", help="Cookies file: Netscape, JSON, Cookie header, Set-Cookie lines, or name=value lines.")
-    parser.add_argument("--load-cookies", help="Alias for --cookies-file, useful with --save-cookies/--cookie-jar flows.")
-    parser.add_argument("--save-cookies", help="Save response/session cookies to a simple reusable cookie file.")
-    parser.add_argument("--cookie-jar", help="Load cookies before the request and save updated cookies after the response.")
-    parser.add_argument("--set-cookie", action="append", default=[], help="Set/replace a cookie after all other sources. Repeatable.")
-    parser.add_argument("--remove-cookie", action="append", default=[], help="Remove a cookie by name after all other sources. Repeatable.")
+    import_group = parser.add_argument_group("request import and replay")
+    import_group.add_argument("--raw-request", help="Load a raw HTTP/1.1 request from file and replay it.")
+    import_group.add_argument("--raw-scheme", choices=["http", "https"], default="https", help="Scheme used when --raw-request has a relative target.")
+    import_group.add_argument("--from-curl", help="Import a curl command string or a file containing a curl command.")
 
-    parser.add_argument("--set-query", action="append", default=[], help="Set/replace URL query parameter name=value. Repeatable.")
-    parser.add_argument("--remove-query", action="append", default=[], help="Remove URL query parameter by name. Repeatable.")
+    headers_group = parser.add_argument_group("headers")
+    headers_group.add_argument("-H", "--headers", action="append", help="Headers as string. Repeatable. Example: -H 'X-Test: 1'")
+    headers_group.add_argument("--headers-file", help="Headers file: JSON, lines like 'Header: value', or curl -H fragments.")
+    headers_group.add_argument("--set-header", action="append", default=[], help="Set/replace a header after all other sources. Repeatable.")
+    headers_group.add_argument("--remove-header", action="append", default=[], help="Remove a header by name after all other sources. Repeatable.")
 
-    parser.add_argument("-d", "--payload", help="Payload/body as string.")
-    parser.add_argument("--payload-file", help="File to send as body bytes.")
-    parser.add_argument("--json", dest="json_body", help="JSON body string. Sets Content-Type when absent.")
-    parser.add_argument("--json-file", help="JSON body file. Validates JSON and sets Content-Type when absent.")
-    parser.add_argument("--form", help="Form body string, for example 'a=1&b=2'. Sets Content-Type when absent.")
-    parser.add_argument("--form-file", help="Form body file. Sets Content-Type when absent.")
-    parser.add_argument("--binary-file", help="Binary file to send as body bytes. Alias specialized for non-text payloads.")
-    parser.add_argument("--multipart", action="append", default=[], help="Multipart field. Use name=value or name=@file[;type=mime]. Repeatable.")
-    parser.add_argument("--replace-body", action="append", default=[], help="Replace text in string/UTF-8 body using old=new. Repeatable.")
+    cookies_group = parser.add_argument_group("cookies")
+    cookies_group.add_argument("-b", "--cookies", action="append", help="Cookies as string. Repeatable. Example: -b 'a=b; c=d'")
+    cookies_group.add_argument("--cookies-file", help="Cookies file: Netscape, JSON, Cookie header, Set-Cookie lines, or name=value lines.")
+    cookies_group.add_argument("--load-cookies", help="Alias for --cookies-file, useful with --save-cookies/--cookie-jar flows.")
+    cookies_group.add_argument("--save-cookies", help="Save response/session cookies to a simple reusable cookie file.")
+    cookies_group.add_argument("--cookie-jar", help="Load cookies before the request and save updated cookies after the response.")
+    cookies_group.add_argument("--set-cookie", action="append", default=[], help="Set/replace a cookie after all other sources. Repeatable.")
+    cookies_group.add_argument("--remove-cookie", action="append", default=[], help="Remove a cookie by name after all other sources. Repeatable.")
 
-    parser.add_argument("--var", action="append", default=[], help="Template variable KEY=value for {{KEY}} placeholders. Repeatable.")
-    parser.add_argument("--vars-file", help="File with KEY=value variables for {{KEY}} placeholders.")
+    query_group = parser.add_argument_group("query parameters")
+    query_group.add_argument("--set-query", action="append", default=[], help="Set/replace URL query parameter name=value. Repeatable.")
+    query_group.add_argument("--remove-query", action="append", default=[], help="Remove URL query parameter by name. Repeatable.")
 
-    parser.add_argument("-c", "--config", default=DEFAULT_CONFIG_FILE, help="Default .config configuration file.")
-    parser.add_argument("--init-config", action="store_true", help="Create a base configuration file and exit.")
+    body_group = parser.add_argument_group("payload and body helpers")
+    body_group.add_argument("-d", "--payload", help="Payload/body as string.")
+    body_group.add_argument("--payload-file", help="File to send as body bytes.")
+    body_group.add_argument("--json", dest="json_body", help="JSON body string. Sets Content-Type when absent.")
+    body_group.add_argument("--json-file", help="JSON body file. Validates JSON and sets Content-Type when absent.")
+    body_group.add_argument("--form", help="Form body string, for example 'a=1&b=2'. Sets Content-Type when absent.")
+    body_group.add_argument("--form-file", help="Form body file. Sets Content-Type when absent.")
+    body_group.add_argument("--binary-file", help="Binary file to send as body bytes. Alias specialized for non-text payloads.")
+    body_group.add_argument("--multipart", action="append", default=[], help="Multipart field. Use name=value or name=@file[;type=mime]. Repeatable.")
+    body_group.add_argument("--replace-body", action="append", default=[], help="Replace text in string/UTF-8 body using old=new. Repeatable.")
 
-    parser.add_argument("--timeout", type=float, help="Approximate total request timeout in seconds.")
-    parser.add_argument("--no-redirects", action="store_true", help="Do not follow HTTP redirects.")
-    parser.add_argument("--show-redirect-chain", action="store_true", help="Print the redirect chain when redirects are followed.")
-    parser.add_argument("--insecure", action="store_true", help="Do not verify TLS. Use only in lab environments.")
-    parser.add_argument("--proxy", help="HTTP/HTTPS proxy. Example: http://127.0.0.1:8080")
-    parser.add_argument("--no-env-proxy", action="store_true", help="Ignore proxy/CA settings from environment variables.")
+    variables_group = parser.add_argument_group("template variables")
+    variables_group.add_argument("--var", action="append", default=[], help="Template variable KEY=value for {{KEY}} placeholders. Repeatable.")
+    variables_group.add_argument("--vars-file", help="File with KEY=value variables for {{KEY}} placeholders.")
 
-    parser.add_argument("--include", action="store_true", help="Show response headers along with the body.")
-    parser.add_argument("--show-request", action="store_true", help="Show the prepared request with secrets redacted.")
-    parser.add_argument("--dry-run", action="store_true", help="Prepare and show the request without sending it.")
-    parser.add_argument("-o", "--output", help="Save response body to file.")
-    parser.add_argument("--raw", action="store_true", help="Do not pretty-print JSON responses.")
-    parser.add_argument("--no-logo", action="store_true", help="Do not show the logo.")
-    parser.add_argument("--save-prepared-request", help="Save the prepared HTTP request as raw HTTP/1.1 text.")
-    parser.add_argument("--export-curl", action="store_true", help="Print an equivalent curl command for the prepared request.")
-    parser.add_argument("--export-python", action="store_true", help="Print a minimal Python requests snippet for the prepared request.")
-    parser.add_argument("--report-json", help="Save an execution report as JSON metadata.")
-    parser.add_argument("--report-html", help="Save an execution report as a self-contained HTML file.")
-    parser.add_argument("--save-session", help="Save request, curl, response headers/body, and metadata in a directory.")
-    parser.add_argument("--no-redact-reports", action="store_true", help="Do not redact sensitive metadata in JSON/HTML reports.")
+    network_group = parser.add_argument_group("network, redirects, proxy and TLS")
+    network_group.add_argument("--timeout", type=float, help="Approximate total request timeout in seconds.")
+    network_group.add_argument("--no-redirects", action="store_true", help="Do not follow HTTP redirects.")
+    network_group.add_argument("--show-redirect-chain", action="store_true", help="Print the redirect chain when redirects are followed.")
+    network_group.add_argument("--insecure", action="store_true", help="Do not verify TLS. Use only in lab environments.")
+    network_group.add_argument("--proxy", help="HTTP/HTTPS proxy. Example: http://127.0.0.1:8080")
+    network_group.add_argument("--no-env-proxy", action="store_true", help="Ignore proxy/CA settings from environment variables.")
 
-    color_group = parser.add_mutually_exclusive_group()
+    output_group = parser.add_argument_group("output, display and exports")
+    output_group.add_argument("--include", action="store_true", help="Show response headers along with the body.")
+    output_group.add_argument("--show-request", action="store_true", help="Show the prepared request with secrets redacted.")
+    output_group.add_argument("--dry-run", action="store_true", help="Prepare and show the request without sending it.")
+    output_group.add_argument("-o", "--output", help="Save response body to file.")
+    output_group.add_argument("--raw", action="store_true", help="Do not pretty-print JSON responses.")
+    output_group.add_argument("--no-logo", action="store_true", help="Do not show the logo.")
+    output_group.add_argument("--save-prepared-request", help="Save the prepared HTTP request as raw HTTP/1.1 text.")
+    output_group.add_argument("--export-curl", action="store_true", help="Print an equivalent curl command for the prepared request.")
+    output_group.add_argument("--export-python", action="store_true", help="Print a minimal Python requests snippet for the prepared request.")
+
+    reports_group = parser.add_argument_group("reports and session evidence")
+    reports_group.add_argument("--report-json", help="Save an execution report as JSON metadata.")
+    reports_group.add_argument("--report-html", help="Save an execution report as a self-contained HTML file.")
+    reports_group.add_argument("--save-session", help="Save request, curl, response headers/body, and metadata in a directory.")
+    reports_group.add_argument("--no-redact-reports", action="store_true", help="Do not redact sensitive metadata in JSON/HTML reports.")
+
+    ux_group = parser.add_argument_group("color and interactive mode")
+    color_group = ux_group.add_mutually_exclusive_group()
     color_group.add_argument("--color", nargs="?", const="always", choices=sorted(COLOR_MODES), help="ANSI color mode: auto, always, or never. Using --color without a value equals always.")
     color_group.add_argument("--no-color", action="store_true", help="Disable ANSI colors.")
-    parser.add_argument("-i", "--interactive", action="store_true", help="Interactive mode to build the request step by step.")
+    ux_group.add_argument("-i", "--interactive", action="store_true", help="Interactive mode to build the request step by step.")
     return parser
 
 
@@ -1758,6 +1806,9 @@ def main(argv: Optional[list[str]] = None) -> int:
     if argv and argv[0] == "web":
         from .webui import run_web
         return run_web(argv[1:])
+    if argv and argv[0] == "update":
+        from .updater import run_update
+        return run_update(argv[1:])
 
     parser = build_parser()
     args = parser.parse_args(argv)

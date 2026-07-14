@@ -54,6 +54,7 @@ if errorlevel 1 (
 (
   echo @echo off
   echo set "FORGREQUEST_CONFIG=%%~dp0forgrequest.config"
+  echo set "FORGREQUEST_INSTALL_DIR=%%~dp0"
   echo %PY_CMD% "%%~dp0forgrequest.py" %%*
 ) > "%WRAPPER_PATH%"
 
@@ -123,5 +124,7 @@ if errorlevel 1 (
 )
 
 reg add HKCU\Environment /v FORGREQUEST_CONFIG /t REG_EXPAND_SZ /d "%CONFIG_PATH%" /f >nul
+reg add HKCU\Environment /v FORGREQUEST_INSTALL_DIR /t REG_EXPAND_SZ /d "%INSTALL_DIR%" /f >nul
 set "FORGREQUEST_CONFIG=%CONFIG_PATH%"
+set "FORGREQUEST_INSTALL_DIR=%INSTALL_DIR%"
 exit /b 0

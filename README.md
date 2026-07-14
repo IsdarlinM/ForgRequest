@@ -19,7 +19,7 @@ It is intentionally **not a crawler** and **not a vulnerability scanner**. It do
         ██║  ██║███████╗╚██████╔╝╚██████╔╝███████╗███████║   ██║   
         ╚═╝  ╚═╝╚══════╝ ╚══▀▀═╝  ╚═════╝ ╚══════╝╚══════╝   ╚═╝   
 
-             Forgery HTTP Request v1.6.0  ::  signature: imr
+             Forgery HTTP Request v1.7.2  ::  signature: imr
 ```
 
 When ANSI color is enabled, the logo is rendered with **one single cyan color** to keep terminal output stable and professional.
@@ -28,16 +28,36 @@ When ANSI color is enabled, the logo is rendered with **one single cyan color** 
 
 ---
 
-## What changed in v1.6.0
+## What changed in v1.7.2
 
-- Added a professional local Web Console with `forgrequest web`.
-- The Web Console exposes the same request-building features as the CLI: URL/method, headers, cookies, raw request replay, cURL import, body helpers, variables, modifiers, reports, cookie jar, redirect chain, exports, session evidence, and response diff.
-- Added `src/forgrequest/webui.py` using Python standard-library HTTP serving; no new runtime dependency is required.
-- Updated documentation to describe both CLI and Web Console workflows.
-- Kept the project boundary unchanged: ForgRequest is still a manual HTTP request replication client, not a crawler or scanner.
+- Made the primary **Run request** action immediately visible from every Web Console panel.
+- Added a persistent Run request button to the sticky top navigation and a prominent quick-action button to the sidebar.
+- Redesigned the execution action card with stronger visual hierarchy and clearer Preview/Reset secondary actions.
+- Added `Ctrl+Enter` and `Cmd+Enter` keyboard shortcuts to run the current request from any input field.
+- Added shared running/disabled states across all Run request controls to prevent duplicate submissions.
+- Improved responsive behavior so the primary action remains easy to reach on desktop, tablet, and mobile layouts.
+- Automatically brings the execution console into view after a request finishes or a Web Console error occurs.
 
-## Capabilities retained from v1.5.0
+## Previous v1.7.1 highlights
 
+- Reworked the main `forgrequest --help` output so every top-level command is visible.
+- Added the `web`, `diff`, and `update` commands to the main help screen.
+- Organized CLI help into clear sections: general, target/method, request import, headers, cookies, query parameters, body helpers, variables, network/TLS, output/exports, reports/session evidence, color, and interactive mode.
+- Added command-specific help pointers and practical examples directly to `forgrequest --help`.
+- Updated documentation to match the organized help output.
+
+## Previous v1.7.0 highlights
+
+- Added `forgrequest update`, a safe updater for installed or source-tree deployments.
+- The update mechanism can pull the official GitHub ZIP archive or use a local ZIP with `--from-zip` for offline validation.
+- Updates create a full backup before replacing application files.
+- Local configuration and operator-generated directories are preserved, including `forgrequest.config`, `reports`, `sessions`, `cases`, `outputs`, `artifacts`, `web-artifacts`, `workspace`, `workspaces`, `projects`, and `data` when present.
+- Linux and Windows wrappers now expose `FORGREQUEST_INSTALL_DIR` so the updater can identify the active installation reliably.
+- Documentation and installer notes were refreshed for the update workflow.
+
+## Capabilities
+
+- Standard request builder: URL, method, headers, cookies, payload, proxy, redirects, TLS verification, timeout, output file.
 - Raw HTTP/1.1 request import and replay with `--raw-request`.
 - Import requests from cURL with `--from-curl`.
 - Export prepared requests as cURL or Python `requests` snippets.
@@ -50,6 +70,8 @@ When ANSI color is enabled, the logo is rendered with **one single cyan color** 
 - JSON and HTML execution reports with `--report-json` and `--report-html`.
 - Evidence/session export with `--save-session`.
 - Local file comparison command: `forgrequest diff file-a file-b`.
+- Local Web Console: `forgrequest web`.
+- Safe update command: `forgrequest update`.
 - Improved redaction in prepared-request previews and reports.
 
 ---
@@ -84,6 +106,7 @@ ForgeryHttpRequest/
     └── forgrequest/
         ├── __init__.py
         ├── cli.py                     # Main CLI application code
+        ├── updater.py                 # Safe update command implementation
         └── webui.py                   # Local Web Console server and UI
 ```
 
@@ -98,8 +121,6 @@ The installers create a global command named:
 ```bash
 forgrequest
 ```
-
-Installer-specific notes are documented in `install/README.md`, `install/linux/README.md`, and `install/windows/README.md`.
 
 ---
 
@@ -122,13 +143,15 @@ python3 -m pip install --user -r requirements.txt
 
 Windows alternative:
 
-```powershell
+```cmd
 py -3 -m pip install --user -r requirements.txt
 ```
 
 ---
 
 ## Install as a command
+
+Installers are stored only under the `install/` directory to avoid duplicate entry points.
 
 ### Linux/macOS
 
@@ -138,8 +161,6 @@ From the project root:
 chmod +x install/linux/install_linux.sh
 ./install/linux/install_linux.sh
 ```
-
-Installers are stored only under the `install/` directory to avoid duplicate entry points.
 
 Default Linux/macOS paths:
 
@@ -153,6 +174,13 @@ The installer automatically appends the required PATH export to common shell sta
 
 ```bash
 export PATH="$HOME/.local/bin:$PATH"
+```
+
+The installed wrapper also exports:
+
+```bash
+FORGREQUEST_CONFIG="$HOME/.config/forgrequest/forgrequest.config"
+FORGREQUEST_INSTALL_DIR="$HOME/.local/share/forgrequest"
 ```
 
 Open a new terminal if your current parent shell does not immediately recognize `forgrequest`.
@@ -181,13 +209,66 @@ Config:      %LOCALAPPDATA%\Programs\forgrequest\forgrequest.config
 Command:     forgrequest.cmd, available as forgrequest after PATH update
 ```
 
-The installer updates the user PATH and sets `FORGREQUEST_CONFIG`. Open a new terminal after installation if an already-open terminal does not immediately detect the new command.
+The installer updates the user PATH and sets:
+
+```text
+FORGREQUEST_CONFIG
+FORGREQUEST_INSTALL_DIR
+```
+
+Open a new terminal after installation if an already-open terminal does not immediately detect the new command.
 
 Uninstall:
 
 ```cmd
 install\windows\install_windows.cmd --uninstall
 ```
+
+---
+
+## Update ForgRequest
+
+Update the active installation from the official GitHub ZIP archive:
+
+```bash
+forgrequest update --yes
+```
+
+Dry-run the update plan without changing files:
+
+```bash
+forgrequest update --dry-run
+```
+
+Update from a local ZIP file, useful for offline validation or testing a packaged release:
+
+```bash
+forgrequest update --from-zip ./ForgRequest-latest.zip --yes
+```
+
+Keep the backup after a successful update:
+
+```bash
+forgrequest update --yes --keep-backup
+```
+
+Update a specific installation directory:
+
+```bash
+forgrequest update --install-dir ~/.local/share/forgrequest --yes
+```
+
+The updater:
+
+1. Validates the current installation/project directory.
+2. Downloads or loads the update ZIP.
+3. Validates that the archive contains `forgrequest.py` and `src/forgrequest/cli.py`.
+4. Creates a full backup before replacing files.
+5. Preserves local configuration and operator-generated artifacts.
+6. Restores the previous installation automatically if the update fails.
+7. Optionally installs/refreshes Python dependencies from `requirements.txt`.
+
+Use `forgrequest update --help` for all options.
 
 ---
 
@@ -204,6 +285,36 @@ Run after installation:
 ```bash
 forgrequest -u https://example.com --dry-run
 ```
+
+POST with a JSON payload file:
+
+```bash
+forgrequest \
+  -u "https://example.com/api/login" \
+  -X POST \
+  --json-file ./examples/payload.json \
+  --show-request
+```
+
+Use a header file:
+
+```bash
+forgrequest \
+  -u "https://example.com/api" \
+  -X POST \
+  --headers-file ./examples/login_head.example.txt \
+  --json-file ./examples/payload.json \
+  --show-request
+```
+
+Header file example:
+
+```text
+User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36
+X-Bug-Bounty: H1-imr
+```
+
+The header parser safely supports semicolons inside values such as `User-Agent` and only splits semicolon-separated headers when the next segment looks like another valid header name.
 
 ---
 
@@ -239,7 +350,7 @@ Open the default browser automatically:
 forgrequest web --open
 ```
 
-The Web Console is a local operator UI for the same CLI engine. Its form controls are normalized as full-width responsive fields so inputs, selects, and text areas keep consistent horizontal sizing across all panels. It includes panels for:
+The Web Console is a local operator UI for the same CLI engine. It includes panels for:
 
 - Request Builder: method, URL, headers, cookies, proxy, timeout, and body helpers.
 - Raw / cURL Replay: raw HTTP/1.1 request replay, cURL import, header-file simulation, and cookie-file simulation.
@@ -247,333 +358,15 @@ The Web Console is a local operator UI for the same CLI engine. Its form control
 - Execution & Reports: dry-run, prepared request preview, redirect chain, cURL/Python export, config generation, config path selection, cookie jar, JSON report, HTML report, response body save, and session evidence export.
 - Response Diff: browser UI for the same `forgrequest diff` command.
 
+The primary **Run request** action is available from the sticky top navigation, the sidebar, and the Execution & Reports panel. Press `Ctrl+Enter` on Windows/Linux or `Cmd+Enter` on macOS to execute the current request from any input field. All Run request controls share the same busy state to prevent accidental duplicate submissions.
+
 Security note: keep the Web Console bound to localhost. It can send HTTP requests from your machine and save artifacts to the configured workspace. Do not expose it on a public interface.
-
-POST with a JSON payload file:
-
-```bash
-forgrequest \
-  -u "https://example.com/api/login" \
-  -X POST \
-  --json-file ./examples/payload.json \
-  --show-request
-```
-
-Use a header file:
-
-```bash
-forgrequest \
-  -u "https://example.com/api" \
-  -X POST \
-  --headers-file ./examples/login_head.example.txt \
-  --json-file ./examples/payload.json \
-  --show-request
-```
-
-Header file example:
-
-```text
-User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36
-X-Bug-Bounty: H1-imr
-```
-
-The header parser safely supports semicolons inside values such as `User-Agent` and only splits semicolon-separated headers when the next segment looks like another valid header name.
-
----
-
-## Raw request replay
-
-Replay a raw HTTP/1.1 request captured from a proxy, browser, log, or lab:
-
-```bash
-forgrequest --raw-request ./request.raw --show-request
-```
-
-Example raw request:
-
-```http
-POST /api/login HTTP/1.1
-Host: example.com
-User-Agent: Mozilla/5.0
-Content-Type: application/json
-Cookie: session=abc
-
-{"username":"test","password":"test"}
-```
-
-If the raw request uses a relative path, `Host` is required. By default, the URL is built with HTTPS. Override this with:
-
-```bash
-forgrequest --raw-request ./request.raw --raw-scheme http
-```
-
-You can also override the URL explicitly:
-
-```bash
-forgrequest --raw-request ./request.raw -u https://staging.example.com/api/login
-```
-
----
-
-## Import from cURL
-
-Import a cURL command directly:
-
-```bash
-forgrequest --from-curl "curl 'https://example.com/api' -H 'X-Test: 1' --data-raw '{\"a\":1}'" --show-request
-```
-
-Or from a file:
-
-```bash
-forgrequest --from-curl ./request.curl --show-request
-```
-
-The parser supports common cURL flags such as `-X`, `-H`, `-b`, `-A`, `-d`, `--data-raw`, `--data-binary`, `-k`, `-L`, and `--url`.
-
----
-
-## Request modifiers
-
-Set or remove headers after loading config/files/raw/cURL sources:
-
-```bash
-forgrequest -u https://example.com \
-  --set-header "X-Test: 1" \
-  --remove-header "X-Powered-By" \
-  --show-request
-```
-
-Set or remove cookies:
-
-```bash
-forgrequest -u https://example.com \
-  --set-cookie "session=abc" \
-  --remove-cookie "tracking_id" \
-  --show-request
-```
-
-Set or remove query parameters:
-
-```bash
-forgrequest -u "https://example.com/api/user?id=1&utm_source=x" \
-  --set-query "debug=true" \
-  --remove-query "utm_source" \
-  --show-request
-```
-
-Replace text inside a text/UTF-8 body:
-
-```bash
-forgrequest -u https://example.com/api -X POST \
-  --json '{"role":"user"}' \
-  --replace-body '"user"="admin"' \
-  --show-request
-```
-
----
-
-## Body helpers
-
-JSON body:
-
-```bash
-forgrequest -u https://example.com/api -X POST --json '{"test":true}'
-```
-
-JSON file:
-
-```bash
-forgrequest -u https://example.com/api -X POST --json-file ./examples/payload.json
-```
-
-Form body:
-
-```bash
-forgrequest -u https://example.com/login -X POST --form 'username=a&password=b'
-```
-
-Binary body:
-
-```bash
-forgrequest -u https://example.com/upload -X POST --binary-file ./sample.bin
-```
-
-Multipart body:
-
-```bash
-forgrequest -u https://example.com/upload -X POST \
-  --multipart "description=test" \
-  --multipart "file=@./sample.txt;type=text/plain"
-```
-
-`--json`, `--json-file`, `--form`, and `--form-file` automatically set `Content-Type` only when the user did not already provide it.
-
----
-
-## Variables and templates
-
-Use `{{NAME}}` placeholders in URLs, headers, cookies, and string bodies:
-
-```bash
-forgrequest -u "{{BASE_URL}}/api/user/{{USER_ID}}" \
-  -H "Authorization: Bearer {{TOKEN}}" \
-  --var BASE_URL=https://example.com \
-  --var USER_ID=123 \
-  --var TOKEN=abc
-```
-
-Load variables from a file:
-
-```bash
-forgrequest -u "{{BASE_URL}}/api" -H "Authorization: Bearer {{TOKEN}}" --vars-file ./vars.env
-```
-
-Example `vars.env`:
-
-```env
-BASE_URL=https://example.com
-TOKEN=abc123
-```
-
----
-
-## Cookie jar workflow
-
-Load cookies from a file:
-
-```bash
-forgrequest -u https://example.com/profile --load-cookies ./cookies.txt
-```
-
-Save cookies from the response/session:
-
-```bash
-forgrequest -u https://example.com/login -X POST --json-file login.json --save-cookies ./cookies.txt
-```
-
-Load and save the same file:
-
-```bash
-forgrequest -u https://example.com/profile --cookie-jar ./cookies.txt
-```
-
-Supported input cookie formats include Netscape cookie files, JSON object, `Cookie:` header, `Set-Cookie:` lines, and simple `name=value` lines.
-
----
-
-## Redirect visibility
-
-Show the redirect chain:
-
-```bash
-forgrequest -u https://example.com --show-redirect-chain
-```
-
-Disable redirects:
-
-```bash
-forgrequest -u https://example.com --no-redirects
-```
-
----
-
-## Export and evidence
-
-Show the prepared request:
-
-```bash
-forgrequest -u https://example.com --show-request --dry-run
-```
-
-Save the prepared raw HTTP request:
-
-```bash
-forgrequest -u https://example.com --save-prepared-request ./prepared.raw --dry-run
-```
-
-Export cURL:
-
-```bash
-forgrequest -u https://example.com/api -H "X-Test: 1" --export-curl --dry-run
-```
-
-Export Python `requests` code:
-
-```bash
-forgrequest -u https://example.com/api -H "X-Test: 1" --export-python --dry-run
-```
-
-Save a complete execution directory:
-
-```bash
-forgrequest -u https://example.com/api --save-session ./case-001
-```
-
-The session directory includes:
-
-```text
-case-001/
-├── request.raw
-├── request.curl
-├── request.py
-├── response.headers
-├── response.body
-├── metadata.json
-└── README.txt
-```
-
-These files may contain sensitive data. Store and share them carefully.
-
----
-
-## Execution reports
-
-Save a JSON execution report:
-
-```bash
-forgrequest -u https://example.com/api --report-json ./report.json
-```
-
-Save an HTML execution report:
-
-```bash
-forgrequest -u https://example.com/api --report-html ./report.html
-```
-
-Reports include request metadata, response metadata, timings, redirect metadata, body size, and execution settings. Sensitive metadata is redacted by default. Disable report redaction only when you intentionally need exact values in a controlled environment:
-
-```bash
-forgrequest -u https://example.com/api --report-json ./report.json --no-redact-reports
-```
-
----
-
-## Compare responses or files
-
-`forgrequest diff` compares two local files. It does not send network requests.
-
-```bash
-forgrequest diff response-a.txt response-b.txt
-```
-
-Save diff metadata as JSON:
-
-```bash
-forgrequest diff response-a.txt response-b.txt --json diff.json
-```
-
-Only print the summary:
-
-```bash
-forgrequest diff response-a.txt response-b.txt --no-body-diff
-```
 
 ---
 
 ## Configuration file
 
-The tool uses `.config` / INI format through Python's standard `configparser` library. It does **not** use TOML, `tomli`, or `tomllib` for runtime config.
+The tool uses `.config` / INI format through Python's standard `configparser` library. It does **not** use TOML, `tomli`, or `tomllib` for runtime configuration.
 
 Default config path when installed:
 
@@ -593,7 +386,7 @@ Sample config:
 ```ini
 [request]
 method = GET
-user_agent = ForgeryHTTP/1.6.0 (imr)
+user_agent = ForgeryHTTP/1.7.2 (imr)
 timeout = 30
 follow_redirects = true
 verify_tls = true
@@ -635,20 +428,25 @@ Priority order:
 
 ---
 
-## Web Console arguments
+## Main CLI arguments
 
-`forgrequest web` starts the local Web Console.
 
-| Argument | Description |
+The main help screen is organized by workflow and now lists every top-level command:
+
+```bash
+forgrequest --help
+forgrequest web --help
+forgrequest diff --help
+forgrequest update --help
+```
+
+### Special commands
+
+| Command | Description |
 |---|---|
-| `--host` | Bind host. Defaults to `127.0.0.1`. |
-| `--port` | Bind port. Defaults to `7413`. |
-| `--workspace` | Directory where web-generated request files, reports, response bodies, and session artifacts are stored. |
-| `--open` | Open the Web Console in the default browser after startup. |
-
----
-
-## Main arguments
+| `forgrequest web` | Start the local Web Console. |
+| `forgrequest diff LEFT RIGHT` | Compare two local response/body files. |
+| `forgrequest update` | Safely update ForgRequest from GitHub or a local ZIP. |
 
 ### Target and method
 
@@ -692,6 +490,13 @@ Priority order:
 | `--binary-file` | Binary file body. |
 | `--multipart` | Multipart field `name=value` or `name=@file[;type=mime]`. Repeatable. |
 | `--replace-body` | Replace text inside string/UTF-8 body using `old=new`. Repeatable. |
+
+### Variables
+
+| Argument | Description |
+|---|---|
+| `--var` | Template variable `KEY=value` for `{{KEY}}` placeholders. Repeatable. |
+| `--vars-file` | File with `KEY=value` variables for `{{KEY}}` placeholders. |
 
 ### Network and TLS
 
@@ -748,6 +553,208 @@ forgrequest --interactive
 
 ---
 
+## Raw HTTP request replay
+
+Example file:
+
+```http
+POST /api/login HTTP/1.1
+Host: example.com
+User-Agent: ForgRequest-lab
+Content-Type: application/json
+Cookie: session=abc
+
+{"username":"test@example.com","password":"change-me"}
+```
+
+Replay it:
+
+```bash
+forgrequest --raw-request ./examples/request.raw.example --raw-scheme https --show-request
+```
+
+Override the URL while reusing the raw method, headers, and body:
+
+```bash
+forgrequest --raw-request ./examples/request.raw.example -u https://target.example/api/login
+```
+
+---
+
+## cURL import and exports
+
+Import from a cURL command:
+
+```bash
+forgrequest --from-curl "curl 'https://example.com/api' -H 'Accept: application/json' --data-raw '{\"a\":1}'" --show-request
+```
+
+Import from a cURL file:
+
+```bash
+forgrequest --from-curl ./request.curl --show-request
+```
+
+Export a prepared request:
+
+```bash
+forgrequest -u https://example.com/api -H "X-Test: 1" --export-curl --export-python --dry-run
+```
+
+---
+
+## Modifiers
+
+```bash
+forgrequest -u "https://example.com/api?debug=false" \
+  --set-header "X-Test: 1" \
+  --remove-header "X-Old" \
+  --set-cookie "session=abc" \
+  --remove-cookie "tracking" \
+  --set-query "debug=true" \
+  --remove-query "utm_source" \
+  --show-request
+```
+
+---
+
+## Body helpers
+
+JSON string:
+
+```bash
+forgrequest -u https://example.com/api -X POST --json '{"ok":true}'
+```
+
+JSON file:
+
+```bash
+forgrequest -u https://example.com/api -X POST --json-file ./examples/payload.json
+```
+
+Form body:
+
+```bash
+forgrequest -u https://example.com/login -X POST --form "username=a&password=b"
+```
+
+Multipart:
+
+```bash
+forgrequest -u https://example.com/upload -X POST --multipart "name=test" --multipart "file=@./payload.json;type=application/json"
+```
+
+Replace text inside a text/UTF-8 body:
+
+```bash
+forgrequest -u https://example.com/api -X POST -d 'role=user' --replace-body 'user=admin'
+```
+
+---
+
+## Variables
+
+Variables can be used in URL, headers, cookies, and text bodies.
+
+```bash
+forgrequest -u "{{BASE_URL}}/api/user/{{USER_ID}}" \
+  -H "Authorization: Bearer {{TOKEN}}" \
+  --var BASE_URL=https://example.com \
+  --var USER_ID=123 \
+  --var TOKEN=change-me \
+  --show-request
+```
+
+From file:
+
+```bash
+forgrequest -u "{{BASE_URL}}/api" --vars-file ./examples/vars.env.example --show-request
+```
+
+---
+
+## Cookie jar workflow
+
+```bash
+forgrequest -u https://example.com/login \
+  -X POST \
+  --json-file ./examples/payload.json \
+  --save-cookies ./session.cookies
+
+forgrequest -u https://example.com/profile \
+  --load-cookies ./session.cookies
+```
+
+Single jar file for load and save:
+
+```bash
+forgrequest -u https://example.com/profile --cookie-jar ./session.cookies
+```
+
+---
+
+## Execution reports
+
+JSON report:
+
+```bash
+forgrequest -u https://example.com/api --report-json ./report.json
+```
+
+HTML report:
+
+```bash
+forgrequest -u https://example.com/api --report-html ./report.html
+```
+
+Disable report redaction only when you intentionally need full local evidence:
+
+```bash
+forgrequest -u https://example.com/api --report-json ./report.json --no-redact-reports
+```
+
+Save a complete local evidence directory:
+
+```bash
+forgrequest -u https://example.com/api --save-session ./case-001
+```
+
+`--save-session` creates:
+
+```text
+request.raw
+request.curl
+request.py
+response.headers
+response.body
+metadata.json
+README.txt
+```
+
+---
+
+## Response diff
+
+Compare two saved files:
+
+```bash
+forgrequest diff response-a.json response-b.json
+```
+
+Save diff summary:
+
+```bash
+forgrequest diff response-a.json response-b.json --json diff.json
+```
+
+Hide the unified body diff:
+
+```bash
+forgrequest diff response-a.json response-b.json --no-body-diff
+```
+
+---
+
 ## Handling incomplete chunked responses
 
 Some servers or edge/CDN layers can close a chunked response early. Python may report this as:
@@ -777,10 +784,10 @@ forgrequest -u https://example.com/api -o partial-response.bin
 
 | Code | Meaning |
 |---:|---|
-| `0` | Success, or dry-run completed. HTTP status was 2xx or 3xx. `forgrequest diff` also returns `0` when files are equal. |
-| `1` | General configuration, validation, file, TLS, connection, or request error. |
+| `0` | Success, dry-run completed, update completed, or HTTP status was 2xx/3xx. |
+| `1` | General configuration, validation, file, TLS, connection, request, update, or web error. |
 | `2` | Missing dependency or startup problem. |
-| `3` | HTTP response status was outside 2xx/3xx, or `forgrequest diff` found differences. |
+| `3` | HTTP response status was outside 2xx/3xx, or compared files differ. |
 | `4` | Response body was incomplete or partially read due to chunked/decoding/read error. |
 
 ---
@@ -790,12 +797,12 @@ forgrequest -u https://example.com/api -o partial-response.bin
 - Use only on systems where you have authorization.
 - Do not store production credentials in config files.
 - Use `--show-request` carefully. Sensitive headers and common sensitive query/body names are redacted in previews/reports.
-- Raw request saves, cURL exports, Python exports, saved sessions, and response bodies may still contain sensitive data when exact reproduction is required.
 - Avoid `--insecure` outside controlled labs.
 - Prefer payload/header/cookie files for repeatable testing.
-- Use `--no-env-proxy` when you need predictable behavior independent of environment proxy variables.
-- Keep the Web Console bound to `127.0.0.1` unless you deliberately need another bind address in a controlled lab.
 - Keep bug bounty proof-of-concept requests minimal, traceable, and within scope.
+- Keep the Web Console bound to `127.0.0.1` unless you fully understand the risk.
+- Use `forgrequest update --dry-run` before updating production workstations.
+- Use `forgrequest update --keep-backup` when you want a retained rollback copy.
 
 ---
 
@@ -803,30 +810,18 @@ forgrequest -u https://example.com/api -o partial-response.bin
 
 ### `forgrequest: command not found`
 
-Linux/macOS: the installer writes the required PATH export automatically. Open a new terminal after installation if needed. The configured line is:
+Linux/macOS: open a new terminal after installation. The installer adds:
 
 ```bash
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
-Windows: the `.cmd` installer updates the user PATH automatically. Open a new terminal after installation, or check that this directory is in the user PATH:
+to common shell startup files.
+
+Windows: open a new terminal after installation, or verify that this directory is in the user PATH:
 
 ```text
 %LOCALAPPDATA%\Programs\forgrequest
-```
-
-### Web Console does not open
-
-Start it manually and open the printed URL:
-
-```bash
-forgrequest web --host 127.0.0.1 --port 7413
-```
-
-If the port is already in use, choose another port:
-
-```bash
-forgrequest web --port 7420
 ```
 
 ### `ModuleNotFoundError: No module named requests`
@@ -861,3 +856,19 @@ Or set the environment variable:
 ```bash
 export FORGREQUEST_CONFIG="$HOME/.config/forgrequest/forgrequest.config"
 ```
+
+### Update fails or is interrupted
+
+Use a dry-run first:
+
+```bash
+forgrequest update --dry-run
+```
+
+Keep a rollback backup:
+
+```bash
+forgrequest update --yes --keep-backup
+```
+
+If an update fails, the updater automatically attempts to restore the previous installation from backup.

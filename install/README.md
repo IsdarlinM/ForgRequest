@@ -1,15 +1,16 @@
-# ForgRequest installers
+# ForgRequest Installers
 
-Installers are organized by operating system and are the only supported installation entry points. There are no root-level convenience installers.
+Installers are organized by operating system and are stored only under this directory.
 
 ```text
 install/
+├── README.md
 ├── linux/
-│   ├── install_linux.sh
-│   └── README.md
+│   ├── README.md
+│   └── install_linux.sh
 └── windows/
-    ├── install_windows.cmd
-    └── README.md
+    ├── README.md
+    └── install_windows.cmd
 ```
 
 ## Linux/macOS
@@ -19,30 +20,44 @@ chmod +x install/linux/install_linux.sh
 ./install/linux/install_linux.sh
 ```
 
-The installer creates the command wrapper in `~/.local/bin/forgrequest` and automatically appends this PATH line to common shell startup files when needed:
+The Linux/macOS installer:
 
-```bash
-export PATH="$HOME/.local/bin:$PATH"
-```
-
-Uninstall:
-
-```bash
-./install/linux/install_linux.sh --uninstall
-```
+- installs the application under `~/.local/share/forgrequest`;
+- installs the config under `~/.config/forgrequest/forgrequest.config`;
+- creates the command wrapper at `~/.local/bin/forgrequest`;
+- adds `export PATH="$HOME/.local/bin:$PATH"` to common shell startup files when missing;
+- sets `FORGREQUEST_CONFIG` and `FORGREQUEST_INSTALL_DIR` inside the installed wrapper;
+- supports uninstall with `./install/linux/install_linux.sh --uninstall`.
 
 ## Windows
-
-Use the CMD installer:
 
 ```cmd
 install\windows\install_windows.cmd
 ```
 
-The installer creates `%LOCALAPPDATA%\Programs\forgrequest\forgrequest.cmd` and updates the user PATH from the `.cmd` installer so the `forgrequest` command is available in new terminals. It also sets the user-level `FORGREQUEST_CONFIG` environment variable.
+The Windows installer is CMD-only. No PowerShell installer is shipped.
 
-Uninstall:
+The Windows installer:
 
-```cmd
-install\windows\install_windows.cmd --uninstall
+- installs the application under `%LOCALAPPDATA%\Programs\forgrequest`;
+- installs the config at `%LOCALAPPDATA%\Programs\forgrequest\forgrequest.config`;
+- creates `%LOCALAPPDATA%\Programs\forgrequest\forgrequest.cmd`;
+- updates the user PATH through `HKCU\Environment`;
+- sets `FORGREQUEST_CONFIG` and `FORGREQUEST_INSTALL_DIR` as user environment variables;
+- supports uninstall with `install\windows\install_windows.cmd --uninstall`.
+
+## Update command
+
+After installation, update with:
+
+```bash
+forgrequest update --yes
 ```
+
+Dry-run first:
+
+```bash
+forgrequest update --dry-run
+```
+
+The updater uses `FORGREQUEST_INSTALL_DIR` when available, creates a full backup, preserves local configuration/artifacts, and restores the previous installation if the update fails.
