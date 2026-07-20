@@ -1,0 +1,368 @@
+def prepare_request(session: requests.Session, cfg: RequestConfig) -> requests.PreparedRequest:
+    body_is_empty = cfg.payload in (None, "", b"")
+    files, data = make_files_and_data(cfg)
+    req = requests.Request(
+        method=cfg.method,
+        url=cfg.url,
+        headers=cfg.headers,
+        cookies=cfg.cookies,
+        data=data if data is not None else (None if body_is_empty else cfg.payload),
+        files=files,
+    )
+    try:
+        return session.prepare_request(req)
+    except requests.exceptions.RequestException as exc:
+        die(f"Could not prepare the request: {exc}")
+
+
+def make_proxies(proxy: str) -> Optional[dict[str, str]]:
+    return {"http": proxy, "https": proxy} if proxy else None
+
+
+def status_color(status_code: int) -> str:
+    if 200 <= status_code < 300:
+        return "green"
+    if 300 <= status_code < 400:
+        return "yellow"
+    return "red"
+
+
+def body_to_bytes(body: Any) -> bytes:
+    if body is None:
+        return b""
+    if isinstance(body, bytes):
+        return body
+    if isinstance(body, bytearray):
+        return bytes(body)
+    return str(body).encode("utf-8")
+
+
+def prepared_to_raw(prepared: requests.PreparedRequest, redact: bool = False) -> str:
+    parsed = urlparse(prepared.url or "")
+    path = urlunparse(("", "", parsed.path or "/", parsed.params, parsed.query, ""))
+    lines = [f"{prepared.method} {path} HTTP/1.1"]
+    headers = dict(prepared.headers)
+    if "Host" not in {k.title(): v for k, v in headers.items()}:
+        netloc = parsed.netloc
+        if netloc:
+            lines.append(f"Host: {netloc}")
+    printable = redact_mapping(headers) if redact else headers
+    for key, value in printable.items():
+        lines.append(f"{key}: {value}")
+    body = body_to_bytes(prepared.body)
+    if body:
+        lines.append("")
+        lines.append(body.decode("utf-8", errors="replace"))
+    return "\r\n".join(lines) + "\r\n"
+
+
+def shell_quote(value: str) -> str:
+    return shlex.quote(value)
+
+
+def prepared_to_curl(prepared: requests.PreparedRequest, redact: bool = False) -> str:
+    url = redact_url(prepared.url or "") if redact else (prepared.url or "")
+    parts = ["curl", "-X", shell_quote(prepared.method or "GET"), shell_quote(url)]
+    headers = redact_mapping(dict(prepared.headers)) if redact else dict(prepared.headers)
+    for key, value in headers.items():
+        parts.extend(["-H", shell_quote(f"{key}: {value}")])
+    body = body_to_bytes(prepared.body)
+    if body:
+        try:
+            text = body.decode("utf-8")
+            parts.extend(["--data-binary", shell_quote(text)])
+        except UnicodeDecodeError:
+            parts.extend(["--data-binary", "@<binary-body-file>"])
+    return " ".join(parts)
+
+
+def prepared_to_python(prepared: requests.PreparedRequest, cfg: RequestConfig, redact: bool = False) -> str:
+    headers = redact_mapping(dict(prepared.headers)) if redact else dict(prepared.headers)
+    url = redact_url(prepared.url or "") if redact else (prepared.url or "")
+    body = body_to_bytes(prepared.body)
+    data_expr = "None"
+    if body:
+        try:
+            data_expr = repr(body.decode("utf-8"))
+        except UnicodeDecodeError:
+            data_expr = repr(body)
+    return (
+        "import requests\n\n"
+        f"url = {url!r}\n"
+        f"headers = {headers!r}\n"
+        f"data = {data_expr}\n\n"
+        "response = requests.request(\n"
+        f"    {prepared.method!r},\n"
+        "    url,\n"
+        "    headers=headers,\n"
+        "    data=data,\n"
+        f"    timeout={cfg.timeout!r},\n"
+        f"    allow_redirects={cfg.follow_redirects!r},\n"
+        f"    verify={cfg.verify_tls!r},\n"
+        ")\n"
+        "print(response.status_code)\n"
+        "print(response.text)\n"
+    )
+
+
+def prepared_to_playwright_python(prepared: requests.PreparedRequest, cfg: RequestConfig, redact: bool = False) -> str:
+    headers = redact_mapping(dict(prepared.headers)) if redact else dict(prepared.headers)
+    filtered_headers = {
+        key: value
+        for key, value in headers.items()
+        if key.lower() not in {"host", "cookie", "content-length", "user-agent"}
+    }
+    cookies = redact_mapping(cfg.cookies) if redact else dict(cfg.cookies)
+    url = redact_url(prepared.url or "") if redact else (prepared.url or "")
+    cookie_entries = [
+        {"name": name, "value": value, "url": f"{urlparse(url).scheme}://{urlparse(url).netloc}"}
+        for name, value in cookies.items()
+    ]
+    launch_extra = ""
+    if cfg.browser_executable:
+        launch_extra = f", executable_path={cfg.browser_executable!r}"
+    selector_wait = ""
+    if cfg.browser_wait_selector:
+        selector_wait = f"\n        page.wait_for_selector({cfg.browser_wait_selector!r}, timeout={int(cfg.timeout * 1000)!r})"
+    time_wait = ""
+    if cfg.browser_wait_ms:
+        time_wait = f"\n        page.wait_for_timeout({cfg.browser_wait_ms!r})"
+    return (
+        "from playwright.sync_api import sync_playwright\n\n"
+        f"url = {url!r}\n"
+        f"headers = {filtered_headers!r}\n"
+        f"cookies = {cookie_entries!r}\n\n"
+        "with sync_playwright() as p:\n"
+        f"    browser = p.{cfg.browser_engine}.launch(headless={cfg.browser_headless!r}{launch_extra})\n"
+        "    context = browser.new_context(\n"
+        f"        ignore_https_errors={not cfg.verify_tls!r},\n"
+        f"        user_agent={cfg.user_agent!r},\n"
+        f"        viewport={__import__('forgrequest.browser', fromlist=['parse_viewport']).parse_viewport(cfg.browser_viewport)!r},\n"
+        "        extra_http_headers=headers,\n"
+        "    )\n"
+        "    if cookies:\n"
+        "        context.add_cookies(cookies)\n"
+        "    page = context.new_page()\n"
+        f"    response = page.goto(url, wait_until={cfg.browser_wait_until!r}, timeout={int(cfg.timeout * 1000)!r})"
+        f"{selector_wait}{time_wait}\n"
+        "    print(response.status if response else 0)\n"
+        "    print(page.url)\n"
+        "    print(page.content())\n"
+        "    browser.close()\n"
+    )
+
+
+def build_browser_install_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="forgrequest browser-install",
+        description="Install Playwright browser runtime(s) used by --browser JavaScript rendering.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument("browser", nargs="?", default="chromium", choices=["chromium", "firefox", "webkit", "all"], help="Browser runtime to install.")
+    parser.add_argument("--with-deps", action="store_true", help="Ask Playwright to install OS dependencies too. This may require administrator/root privileges.")
+    return parser
+
+
+def install_browser_runtime(argv: list[str]) -> int:
+    parser = build_browser_install_parser()
+    args = parser.parse_args(argv)
+    try:
+        import playwright  # noqa: F401
+    except ImportError:
+        print("[+] Installing the Playwright Python package...")
+        result = subprocess.run([sys.executable, "-m", "pip", "install", "--user", "playwright>=1.40.0,<2"])
+        if result.returncode != 0:
+            die("Could not install the Playwright Python package.", 2)
+
+    browsers = ["chromium", "firefox", "webkit"] if args.browser == "all" else [args.browser]
+    command = [sys.executable, "-m", "playwright", "install"]
+    if args.with_deps:
+        command.append("--with-deps")
+    command.extend(browsers)
+    print("[+] Installing Playwright runtime: " + ", ".join(browsers))
+    completed = subprocess.run(command)
+    if completed.returncode != 0:
+        die("Playwright browser installation failed. Review the installer output above.", 2)
+    print("[+] Browser runtime installed successfully.")
+    return 0
+
+
+def print_prepared_request(prepared: requests.PreparedRequest, cfg: RequestConfig) -> None:
+    print("\n" + style("[Prepared request]", "cyan", "bold", enabled=cfg.color_enabled))
+    print(f"{style(prepared.method, 'green', 'bold', enabled=cfg.color_enabled)} {style(redact_url(prepared.url or ''), 'cyan', enabled=cfg.color_enabled)}")
+    for k, v in redact_mapping(dict(prepared.headers)).items():
+        header_name = style(k, "blue", enabled=cfg.color_enabled)
+        header_value = style(v, "red", enabled=cfg.color_enabled) if v == "<redacted>" else v
+        print(f"{header_name}: {header_value}")
+    body = prepared.body
+    if body:
+        body_bytes = body_to_bytes(body)
+        print("\n" + style(f"[Body] {len(body_bytes)} bytes", "cyan", enabled=cfg.color_enabled))
+        if len(body_bytes) <= MAX_REQUEST_BODY_PREVIEW:
+            print(redact_text(body_bytes.decode("utf-8", errors="replace")))
+        else:
+            print(style("<body omitted due to size>", "gray", enabled=cfg.color_enabled))
+
+
+def extract_partial_bytes(exc: BaseException) -> bytes:
+    seen: set[int] = set()
+
+    def walk(obj: Any) -> bytes:
+        oid = id(obj)
+        if oid in seen:
+            return b""
+        seen.add(oid)
+        partial = getattr(obj, "partial", None)
+        if isinstance(partial, bytes):
+            return partial
+        for arg in getattr(obj, "args", ()):
+            found = walk(arg)
+            if found:
+                return found
+        return b""
+
+    return walk(exc)
+
+
+def read_response_body(resp: requests.Response) -> tuple[bool, str | None]:
+    chunks: list[bytes] = []
+    try:
+        for chunk in resp.iter_content(chunk_size=8192):
+            if chunk:
+                chunks.append(chunk)
+    except requests.exceptions.ChunkedEncodingError as exc:
+        partial = extract_partial_bytes(exc)
+        if partial:
+            chunks.append(partial)
+        resp._content = b"".join(chunks)
+        resp._content_consumed = True
+        resp.close()
+        return False, f"Incomplete chunked response: {exc}"
+    except requests.exceptions.ContentDecodingError as exc:
+        partial = extract_partial_bytes(exc)
+        if partial:
+            chunks.append(partial)
+        resp._content = b"".join(chunks)
+        resp._content_consumed = True
+        resp.close()
+        return False, f"Response decoding error: {exc}"
+    except requests.exceptions.RequestException as exc:
+        partial = extract_partial_bytes(exc)
+        if partial:
+            chunks.append(partial)
+        resp._content = b"".join(chunks)
+        resp._content_consumed = True
+        resp.close()
+        return False, f"Response read error: {exc}"
+    resp._content = b"".join(chunks)
+    resp._content_consumed = True
+    resp.close()
+    return True, None
+
+
+def print_redirect_chain(resp: requests.Response, cfg: RequestConfig) -> None:
+    chain = list(resp.history) + [resp]
+    if len(chain) <= 1:
+        return
+    print("\n" + style("[Redirect chain]", "cyan", "bold", enabled=cfg.color_enabled))
+    for item in chain:
+        code = style(str(item.status_code), status_color(item.status_code), "bold", enabled=cfg.color_enabled)
+        location = item.headers.get("Location")
+        line = f"HTTP {code} {item.url}"
+        if location:
+            line += f" -> {location}"
+        print(line)
+
+
+def print_response(resp: Any, cfg: RequestConfig, elapsed: float, warning: str | None = None) -> None:
+    code = style(str(resp.status_code), status_color(resp.status_code), "bold", enabled=cfg.color_enabled)
+    reason = style(resp.reason, status_color(resp.status_code), enabled=cfg.color_enabled)
+    label = style("[Response]", "cyan", "bold", enabled=cfg.color_enabled)
+    print(f"\n{label} HTTP {code} {reason} | {elapsed:.3f}s | {len(resp.content)} bytes")
+    print(f"{style('[Final URL]', 'blue', enabled=cfg.color_enabled)} {style(resp.url, 'cyan', enabled=cfg.color_enabled)}")
+
+    if warning:
+        print(style(f"[!] Warning: {warning}", "yellow", enabled=cfg.color_enabled))
+        print(style("[!] Partial response body was preserved when possible.", "yellow", enabled=cfg.color_enabled))
+
+    if cfg.show_redirect_chain:
+        print_redirect_chain(resp, cfg)
+
+    if cfg.include_response_headers:
+        print("\n" + style("[Response headers]", "cyan", enabled=cfg.color_enabled))
+        for k, v in resp.headers.items():
+            print(f"{style(k, 'blue', enabled=cfg.color_enabled)}: {v}")
+
+    if cfg.output:
+        out = Path(cfg.output).expanduser()
+        write_bytes(out, resp.content)
+        print("\n" + style(f"[+] Body saved to: {out}", "green", enabled=cfg.color_enabled))
+        return
+
+    if cfg.method == "HEAD":
+        return
+
+    content_type = resp.headers.get("Content-Type", "")
+    print("\n" + style("[Body]", "cyan", enabled=cfg.color_enabled))
+    if cfg.pretty_json and "json" in content_type.lower():
+        try:
+            print(json.dumps(resp.json(), indent=2, ensure_ascii=False))
+            return
+        except ValueError:
+            pass
+    text = resp.text
+    if len(text) > MAX_PRINT_BODY_CHARS:
+        print(text[:MAX_PRINT_BODY_CHARS])
+        print("\n" + style(f"<output truncated to {MAX_PRINT_BODY_CHARS} characters; use -o file to save everything>", "gray", enabled=cfg.color_enabled))
+    else:
+        print(text)
+
+
+def save_cookie_file(path: str | Path, session: requests.Session) -> None:
+    lines = ["# forgrequest cookie file", "# Format: name=value"]
+    for cookie in session.cookies:
+        lines.append(f"{cookie.name}={cookie.value}")
+    write_text(path, "\n".join(lines) + "\n")
+
+
+def response_headers_text(resp: Any) -> str:
+    lines = [f"HTTP {resp.status_code} {resp.reason}"]
+    for k, v in resp.headers.items():
+        lines.append(f"{k}: {v}")
+    return "\r\n".join(lines) + "\r\n"
+
+
+def build_report(result: ExecutionResult, cfg: RequestConfig) -> dict[str, Any]:
+    resp = result.response
+    request_headers = dict(result.prepared.headers)
+    body_preview = body_to_bytes(result.prepared.body).decode("utf-8", errors="replace")[:MAX_REQUEST_BODY_PREVIEW]
+    if cfg.redact_reports:
+        request_headers = redact_mapping(request_headers)
+        url = redact_url(result.prepared.url or "")
+        body_preview = redact_text(body_preview)
+    else:
+        url = result.prepared.url or ""
+    report: dict[str, Any] = {
+        "tool": "forgrequest",
+        "version": VERSION,
+        "signature": SIGNATURE,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "engine": "browser" if cfg.browser else "http",
+        "request": {
+            "method": result.prepared.method,
+            "url": url,
+            "headers": request_headers,
+            "body_bytes": len(body_to_bytes(result.prepared.body)),
+            "body_preview": body_preview,
+            "follow_redirects": cfg.follow_redirects,
+            "verify_tls": cfg.verify_tls,
+            "proxy_enabled": bool(cfg.proxy),
+            "env_proxy_enabled": not cfg.no_env_proxy,
+        },
+        "execution": {
+            "dry_run": cfg.dry_run,
+            "elapsed_seconds": result.elapsed,
+            "body_complete": result.body_complete,
+            "warning": result.warning,
+        },
+    }
