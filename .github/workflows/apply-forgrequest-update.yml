@@ -33,6 +33,9 @@ jobs:
           fi
           test -d .forgrequest-update/project
           rsync -a .forgrequest-update/project/ ./
+          mkdir -p docs
+          cp README.md docs/README.md
+          chmod +x forgrequest.py install/linux/install_linux.sh
           rm -rf .forgrequest-update
           rm -f .github/workflows/apply-forgrequest-update.yml
 
@@ -50,6 +53,8 @@ jobs:
           python forgrequest.py -u https://example.com --dry-run --no-logo --no-color >/dev/null
           ! grep -Eiq '^## (What changed|Previous v[0-9])' README.md
           cmp -s README.md docs/README.md
+          test "$(grep -c 'data-run-request' src/forgrequest/webui.py)" -ge 1
+          bash -n install/linux/install_linux.sh
 
       - name: Commit release
         shell: bash
