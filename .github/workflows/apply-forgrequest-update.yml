@@ -5,7 +5,7 @@ on:
     branches:
       - main
     paths:
-      - .forgrequest-update/archive.tar.gz.b64
+      - .forgrequest-update/ready
 
 permissions:
   contents: write
@@ -23,7 +23,7 @@ jobs:
         run: |
           set -Eeuo pipefail
           mkdir -p /tmp/forgrequest-release
-          base64 --decode .forgrequest-update/archive.tar.gz.b64 > /tmp/forgrequest-release.tar.gz
+          cat .forgrequest-update/chunk-* | base64 --decode > /tmp/forgrequest-release.tar.gz
           tar -xzf /tmp/forgrequest-release.tar.gz -C /tmp/forgrequest-release
           source_dir="$(find /tmp/forgrequest-release -mindepth 1 -maxdepth 1 -type d | head -n 1)"
           test -n "$source_dir"
