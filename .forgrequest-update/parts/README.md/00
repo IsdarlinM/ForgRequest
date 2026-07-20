@@ -1,0 +1,466 @@
+# Forgery HTTP Request
+
+**Forgery HTTP Request** (`forgrequest`) is an advanced Python HTTP client for authorized request replay, request modification, endpoint behavior validation, labs, CTFs, internal audits, and in-scope bug bounty work.
+
+It is intentionally **not a crawler** and **not a vulnerability scanner**. It does not discover URLs, spider applications, fuzz targets, or run aggressive automated tests. Its purpose is to help an operator build, replay, modify, compare, and document individual HTTP requests with high reproducibility.
+
+```text
+        ███████╗ ██████╗ ██████╗  ██████╗ 
+        ██╔════╝██╔═══██╗██╔══██╗██╔════╝ 
+        █████╗  ██║   ██║██████╔╝██║  ███╗
+        ██╔══╝  ██║   ██║██╔══██╗██║   ██║
+        ██║     ╚██████╔╝██║  ██║╚██████╔╝
+        ╚═╝      ╚═════╝ ╚═╝  ╚═╝ ╚═════╝ 
+
+        ██████╗ ███████╗ ██████╗ ██╗   ██╗███████╗███████╗████████╗
+        ██╔══██╗██╔════╝██╔═══██╗██║   ██║██╔════╝██╔════╝╚══██╔══╝
+        ██████╔╝█████╗  ██║   ██║██║   ██║█████╗  ███████╗   ██║   
+        ██╔══██╗██╔══╝  ██║▄▄ ██║██║   ██║██╔══╝  ╚════██║   ██║   
+        ██║  ██║███████╗╚██████╔╝╚██████╔╝███████╗███████║   ██║   
+        ╚═╝  ╚═╝╚══════╝ ╚══▀▀═╝  ╚═════╝ ╚══════╝╚══════╝   ╚═╝   
+
+             Forgery HTTP Request v1.8.0  ::  signature: imr
+```
+
+When ANSI color is enabled, the logo is rendered with **one single cyan color** to keep terminal output stable and professional.
+
+> Responsible use: use this tool only on systems you own, controlled labs, authorized audits, CTFs, or bug bounty targets where you have explicit permission.
+
+---
+
+## Capabilities
+
+- Standard request builder: URL, method, headers, cookies, payload, proxy, redirects, TLS verification, timeout, output file.
+- Optional JavaScript rendering for one supplied GET page with `--browser`.
+- Browser engines: Chromium, Firefox, and WebKit through Playwright.
+- Rendered DOM, title, console messages, page errors, cookies, redirects, and storage-state capture.
+- Raw HTTP/1.1 request import and replay with `--raw-request`.
+- Import requests from cURL with `--from-curl`.
+- Export prepared requests as cURL or Python reproduction snippets (`requests` or Playwright, depending on the engine).
+- Fast request modifiers: `--set-header`, `--remove-header`, `--set-cookie`, `--remove-cookie`, `--set-query`, `--remove-query`.
+- Body helpers: `--json`, `--json-file`, `--form`, `--form-file`, `--binary-file`, `--multipart`, `--replace-body`.
+- Cookie jar workflow with `--load-cookies`, `--save-cookies`, and `--cookie-jar`.
+- Template variables using `{{NAME}}` with `--var` and `--vars-file`.
+- Redirect chain display with `--show-redirect-chain`.
+- Environment proxy isolation with `--no-env-proxy`.
+- JSON and HTML execution reports with `--report-json` and `--report-html`.
+- Evidence/session export with `--save-session`.
+- Local file comparison command: `forgrequest diff file-a file-b`.
+- Local Web Console: `forgrequest web`.
+- Safe update command: `forgrequest update`.
+- Browser runtime management: `forgrequest browser-install`.
+- Improved redaction in prepared-request previews and reports.
+
+---
+
+## Project layout
+
+```text
+ForgeryHttpRequest/
+├── forgrequest.py                    # Compatibility launcher
+├── pyproject.toml                     # Optional package metadata / console script
+├── requirements.txt                   # Python dependencies
+├── README.md                          # Main documentation
+├── TEST_RESULTS.md                    # Local validation notes
+├── config/
+│   └── forgrequest.config             # Default .config file
+├── docs/
+│   └── README.md                      # Documentation copy
+├── examples/
+│   ├── login_head.example.txt         # Header-file example
+│   ├── payload.json                   # JSON payload example
+│   ├── request.raw.example            # Raw HTTP request replay example
+│   └── vars.env.example               # Template variable example
+├── install/
+│   ├── README.md                      # Installer overview
+│   ├── linux/
+│   │   ├── README.md                  # Linux/macOS install notes
+│   │   └── install_linux.sh           # Linux/macOS installer
+│   └── windows/
+│       ├── README.md                  # Windows install notes
+│       └── install_windows.cmd        # Windows CMD installer
+└── src/
+    └── forgrequest/
+        ├── __init__.py
+        ├── cli.py                     # Main CLI application code
+        ├── browser.py                 # Optional JavaScript browser engine
+        ├── updater.py                 # Safe update command implementation
+        └── webui.py                   # Local Web Console server and UI
+```
+
+The root `forgrequest.py` keeps this command working from the project directory:
+
+```bash
+python forgrequest.py -u https://example.com --dry-run
+```
+
+The installers create a global command named:
+
+```bash
+forgrequest
+```
+
+---
+
+## Requirements
+
+- Python **3.10+**
+- Python package: `requests`
+- Python package: `playwright` for JavaScript browser mode
+- Chromium/Chrome/Edge or a Playwright-managed browser runtime for `--browser`
+
+Manual dependency installation:
+
+```bash
+python -m pip install -r requirements.txt
+```
+
+Linux/macOS alternative:
+
+```bash
+python3 -m pip install --user -r requirements.txt
+```
+
+Windows alternative:
+
+```cmd
+py -3 -m pip install --user -r requirements.txt
+```
+
+Install the default Chromium runtime manually when needed:
+
+```bash
+forgrequest browser-install chromium
+```
+
+Install another engine or all engines:
+
+```bash
+forgrequest browser-install firefox
+forgrequest browser-install webkit
+forgrequest browser-install all
+```
+
+The installers detect a compatible system Chromium/Chrome/Edge first. If none is available, they attempt to install the Playwright Chromium runtime. Failure to download a browser does not remove standard HTTP functionality.
+
+---
+
+## Install as a command
+
+Installers are stored only under the `install/` directory to avoid duplicate entry points.
+
+### Linux/macOS
+
+From the project root:
+
+```bash
+chmod +x install/linux/install_linux.sh
+./install/linux/install_linux.sh
+```
+
+Default Linux/macOS paths:
+
+```text
+Application: ~/.local/share/forgrequest
+Config:      ~/.config/forgrequest/forgrequest.config
+Command:     ~/.local/bin/forgrequest
+```
+
+The installer automatically appends the required PATH export to common shell startup files when it is missing:
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+The installed wrapper also exports:
+
+```bash
+FORGREQUEST_CONFIG="$HOME/.config/forgrequest/forgrequest.config"
+FORGREQUEST_INSTALL_DIR="$HOME/.local/share/forgrequest"
+```
+
+Open a new terminal if your current parent shell does not immediately recognize `forgrequest`.
+
+Uninstall:
+
+```bash
+./install/linux/install_linux.sh --uninstall
+```
+
+### Windows
+
+From CMD in the project root, run the Windows CMD installer:
+
+```cmd
+install\windows\install_windows.cmd
+```
+
+No PowerShell installer is required or shipped. The `.cmd` installer performs the installation and updates the user environment variables.
+
+Default Windows paths:
+
+```text
+Application: %LOCALAPPDATA%\Programs\forgrequest
+Config:      %LOCALAPPDATA%\Programs\forgrequest\forgrequest.config
+Command:     forgrequest.cmd, available as forgrequest after PATH update
+```
+
+The installer updates the user PATH and sets:
+
+```text
+FORGREQUEST_CONFIG
+FORGREQUEST_INSTALL_DIR
+```
+
+Open a new terminal after installation if an already-open terminal does not immediately detect the new command.
+
+Uninstall:
+
+```cmd
+install\windows\install_windows.cmd --uninstall
+```
+
+---
+
+## Update ForgRequest
+
+Update the active installation from the official GitHub ZIP archive:
+
+```bash
+forgrequest update --yes
+```
+
+Dry-run the update plan without changing files:
+
+```bash
+forgrequest update --dry-run
+```
+
+Update from a local ZIP file, useful for offline validation or testing a packaged release:
+
+```bash
+forgrequest update --from-zip ./ForgRequest-latest.zip --yes
+```
+
+Keep the backup after a successful update:
+
+```bash
+forgrequest update --yes --keep-backup
+```
+
+Update a specific installation directory:
+
+```bash
+forgrequest update --install-dir ~/.local/share/forgrequest --yes
+```
+
+The updater:
+
+1. Validates the current installation/project directory.
+2. Downloads or loads the update ZIP.
+3. Validates that the archive contains `forgrequest.py` and `src/forgrequest/cli.py`.
+4. Creates a full backup before replacing files.
+5. Preserves local configuration and operator-generated artifacts.
+6. Restores the previous installation automatically if the update fails.
+7. Optionally installs/refreshes Python dependencies from `requirements.txt`.
+
+Use `forgrequest update --help` for all options.
+
+---
+
+## Basic usage
+
+Run from source:
+
+```bash
+python forgrequest.py -u https://example.com --dry-run
+```
+
+Run after installation:
+
+```bash
+forgrequest -u https://example.com --dry-run
+```
+
+POST with a JSON payload file:
+
+```bash
+forgrequest \
+  -u "https://example.com/api/login" \
+  -X POST \
+  --json-file ./examples/payload.json \
+  --show-request
+```
+
+Use a header file:
+
+```bash
+forgrequest \
+  -u "https://example.com/api" \
+  -X POST \
+  --headers-file ./examples/login_head.example.txt \
+  --json-file ./examples/payload.json \
+  --show-request
+```
+
+Header file example:
+
+```text
+User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36
+X-Bug-Bounty: H1-imr
+```
+
+The header parser safely supports semicolons inside values such as `User-Agent` and only splits semicolon-separated headers when the next segment looks like another valid header name.
+
+---
+
+## Web Console
+
+Launch the local browser-based interface:
+
+```bash
+forgrequest web
+```
+
+Default URL:
+
+```text
+http://127.0.0.1:7413/
+```
+
+Run from source:
+
+```bash
+python forgrequest.py web
+```
+
+Custom host, port, and artifact workspace:
+
+```bash
+forgrequest web --host 127.0.0.1 --port 7413 --workspace ~/.forgrequest/web-artifacts
+```
+
+Open the default browser automatically:
+
+```bash
+forgrequest web --open
+```
+
+The Web Console uses the same execution engine as the CLI and is organized into:
+
+- **Request**: method, URL, headers, cookies, and body helpers.
+- **Replay & Import**: raw HTTP/1.1, cURL import, header files, and cookie files.
+- **Modifiers & Data**: header/cookie/query changes, body replacements, and template variables.
+- **Browser & Network**: HTTP/browser engine selection, Chromium/Firefox/WebKit, lifecycle waits, selector waits, viewport, storage state, proxy, redirects, and TLS.
+- **Output & Reports**: request preview, cURL/Python export, response/rendered-DOM output, cookie jar, JSON/HTML reports, session evidence, and config generation.
+- **Response Diff**: local response/body comparison through the same `forgrequest diff` command.
+- **Feature Map**: feature coverage and explicit non-crawler boundaries.
+
+The primary **Run request** action is available as a single persistent button in the sticky top navigation, next to the version indicator. Press `Ctrl+Enter` on Windows/Linux or `Cmd+Enter` on macOS to execute the current request from any input field. The button enters a busy state to prevent accidental duplicate submissions.
+
+Security note: keep the Web Console bound to localhost. It can send HTTP requests from your machine and save artifacts to the configured workspace. Do not expose it on a public interface.
+
+---
+
+## Configuration file
+
+The tool uses `.config` / INI format through Python's standard `configparser` library. It does **not** use TOML, `tomli`, or `tomllib` for runtime configuration.
+
+Default config path when installed:
+
+```text
+Linux/macOS: ~/.config/forgrequest/forgrequest.config
+Windows:     %LOCALAPPDATA%\Programs\forgrequest\forgrequest.config
+```
+
+Create a sample config manually:
+
+```bash
+forgrequest --init-config -c ./config/forgrequest.config
+```
+
+Sample config:
+
+```ini
+[request]
+method = GET
+user_agent = ForgeryHTTP/1.8.0 (imr)
+timeout = 30
+follow_redirects = true
+verify_tls = true
+include_response_headers = false
+show_request = false
+dry_run = false
+output =
+proxy =
+pretty_json = true
+show_logo = true
+color = auto
+interactive = false
+show_redirect_chain = false
+no_env_proxy = false
+redact_reports = true
+browser = false
+browser_engine = chromium
+browser_headless = true
+browser_wait_until = networkidle
+browser_wait_selector =
+browser_wait_ms = 0
+browser_viewport = 1366x768
+browser_storage_state =
+save_browser_storage =
+browser_executable =
+headers_file =
+cookies_file =
+payload_file =
+payload =
+
+[headers]
+Accept = */*
+
+[cookies]
+# session = value
+```
+
+The URL is intentionally not allowed in the config file. Always pass it using `-u` or `--url`.
+
+Priority order:
+
+1. Built-in defaults
+2. `.config` file values
+3. Raw request or cURL import values
+4. Files referenced by config or CLI, such as `headers_file`, `cookies_file`, `payload_file`
+5. CLI arguments
+6. Explicit modifiers such as `--set-header`, `--remove-header`, `--set-query`, and `--remove-query`
+7. Interactive mode answers
+
+---
+
+## Main CLI arguments
+
+
+The main help screen is organized by workflow and now lists every top-level command:
+
+```bash
+forgrequest --help
+forgrequest web --help
+forgrequest diff --help
+forgrequest update --help
+forgrequest browser-install --help
+```
+
+### Special commands
+
+| Command | Description |
+|---|---|
+| `forgrequest web` | Start the local Web Console. |
+| `forgrequest diff LEFT RIGHT` | Compare two local response/body files. |
+| `forgrequest update` | Safely update ForgRequest from GitHub or a local ZIP. |
+| `forgrequest browser-install [ENGINE]` | Install Playwright browser runtime(s). |
+
+### Target and method
+
+| Argument | Description |
+|---|---|
+| `-u`, `--url` | Target URL. Required unless `--init-config`, `--raw-request`, or `--from-curl` provides it. Must start with `http://` or `https://`. |
+| `-X`, `--method` | HTTP method. Supported: `GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `HEAD`, `OPTIONS`, `TRACE`. |
