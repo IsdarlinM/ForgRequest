@@ -1,0 +1,234 @@
+        if default:
+            return default
+        if not required:
+            return ""
+        print("[!] Required value")
+
+
+def prompt_yes_no(label: str, default: bool) -> bool:
+    default_text = "Y/n" if default else "y/N"
+    while True:
+        value = safe_input(f"{label} [{default_text}]: ").strip().lower()
+        if not value:
+            return default
+        if value in {"y", "yes", "1", "true"}:
+            return True
+        if value in {"n", "no", "0", "false"}:
+            return False
+        print("[!] Answer y/n")
+
+
+def prompt_float(label: str, default: float) -> float:
+    while True:
+        value = safe_input(f"{label} [{default}]: ").strip()
+        if not value:
+            return default
+        try:
+            result = float(value)
+        except ValueError:
+            print("[!] Must be a number")
+            continue
+        if result <= 0:
+            print("[!] Must be greater than 0")
+            continue
+        return result
+
+
+def interactive_collect(args: argparse.Namespace, cfg_file: dict[str, Any]) -> argparse.Namespace:
+    cfg = {**DEFAULTS, **cfg_file}
+    print("\n[Interactive mode] Press Enter to accept the default value.")
+    if not args.url and not args.raw_request:
+        args.url = prompt_text("Target URL", required=True)
+    if args.url:
+        validate_url(args.url)
+
+    method_default = args.method or get_config_str(cfg, "method", "GET")
+    args.method = prompt_text("HTTP method", method_default).upper()
+    if args.method not in ALLOWED_METHODS:
+        die(f"Unsupported method: {args.method}. Allowed: {', '.join(sorted(ALLOWED_METHODS))}")
+
+    ua_default = args.user_agent or get_config_str(cfg, "user_agent", DEFAULTS["user_agent"])
+    args.user_agent = prompt_text("User-Agent", ua_default)
+
+    print("\n[Headers] Enter headers as 'Name: value'. Leave empty to finish.")
+    header_chunks = collect_argument_chunks(args.headers)
+    while True:
+        item = safe_input("Header: ").strip()
+        if not item:
+            break
+        header_chunks.append(item)
+    args.headers = header_chunks or args.headers
+
+    header_file_default = args.headers_file or get_config_str(cfg, "headers_file")
+    header_file = prompt_text("Headers from file", header_file_default)
+    if header_file:
+        args.headers_file = header_file
+
+    print("\n[Cookies] Enter cookies as 'a=b; c=d' or 'name=value'. Leave empty to finish.")
+    cookie_chunks = collect_argument_chunks(args.cookies)
+    while True:
+        item = safe_input("Cookies: ").strip()
+        if not item:
+            break
+        cookie_chunks.append(item)
+    args.cookies = cookie_chunks or args.cookies
+
+    cookie_file_default = args.cookies_file or get_config_str(cfg, "cookies_file")
+    cookie_file = prompt_text("Cookies from file", cookie_file_default)
+    if cookie_file:
+        args.cookies_file = cookie_file
+
+    payload_file_default = args.payload_file or get_config_str(cfg, "payload_file")
+    if payload_file_default:
+        args.payload_file = prompt_text("Payload from file", payload_file_default)
+    else:
+        payload_choice = prompt_text("Payload: [enter]=unchanged, s=string, f=file", "").lower()
+        if payload_choice in {"s", "string"}:
+            args.payload = prompt_text("Payload/body", args.payload or get_config_str(cfg, "payload"))
+        elif payload_choice in {"f", "file"}:
+            args.payload_file = prompt_text("Payload file path", required=True)
+
+    timeout_default = args.timeout if args.timeout is not None else float(get_config_str(cfg, "timeout", str(DEFAULTS["timeout"])))
+    args.timeout = prompt_float("Timeout in seconds", timeout_default)
+
+    proxy_default = args.proxy or get_config_str(cfg, "proxy")
+    proxy = prompt_text("Proxy HTTP/HTTPS", proxy_default)
+    if proxy:
+        args.proxy = proxy
+
+    overrides: dict[str, bool] = {}
+    overrides["follow_redirects"] = prompt_yes_no("Follow redirects", parse_bool(cfg.get("follow_redirects", True)) and not args.no_redirects)
+    overrides["verify_tls"] = prompt_yes_no("Verify TLS", parse_bool(cfg.get("verify_tls", True)) and not args.insecure)
+    overrides["include_response_headers"] = prompt_yes_no("Show response headers", bool(args.include) or parse_bool(cfg.get("include_response_headers", False)))
+    overrides["show_request"] = prompt_yes_no("Show prepared request", bool(args.show_request) or parse_bool(cfg.get("show_request", False)))
+    overrides["dry_run"] = prompt_yes_no("Dry-run without sending", bool(args.dry_run) or parse_bool(cfg.get("dry_run", False)))
+    overrides["pretty_json"] = prompt_yes_no("Pretty-print JSON", (not args.raw) and parse_bool(cfg.get("pretty_json", True)))
+    overrides["show_logo"] = prompt_yes_no("Show logo", (not args.no_logo) and parse_bool(cfg.get("show_logo", True)))
+    overrides["show_redirect_chain"] = prompt_yes_no("Show redirect chain", bool(args.show_redirect_chain) or parse_bool(cfg.get("show_redirect_chain", False)))
+
+    color_default = normalize_color_mode(getattr(args, "color", None) or ("never" if getattr(args, "no_color", False) else cfg.get("color", DEFAULTS["color"])))
+    color_mode = prompt_text("Color ANSI (auto/always/never)", color_default).lower()
+    setattr(args, "_interactive_color_mode", normalize_color_mode(color_mode))
+    setattr(args, "_interactive_overrides", overrides)
+    return args
+
+
+def build_diff_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="forgrequest diff",
+        description="Compare two saved HTTP responses or arbitrary files. This does not send network requests.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+        epilog="Special commands: forgrequest web --help | forgrequest diff --help | forgrequest update --help | forgrequest browser-install --help",
+    )
+    parser.add_argument("left", help="First file")
+    parser.add_argument("right", help="Second file")
+    parser.add_argument("--context", type=int, default=3, help="Unified diff context lines")
+    parser.add_argument("--json", dest="json_output", help="Save diff summary to JSON file")
+    parser.add_argument("--no-body-diff", action="store_true", help="Only print summary, not unified textual diff")
+    return parser
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="forgrequest",
+        description=(
+            "Forgery HTTP Request: HTTP client for authorized request replay, "
+            "request modification, response viewing, local diffing, web operation, and safe updates.\n\n"
+            "Boundary: ForgRequest is not a crawler and not a vulnerability scanner. "
+            "It works on individual operator-supplied requests."
+        ),
+        formatter_class=HelpFormatter,
+        epilog=(
+            "Command-specific help:\n"
+            "  forgrequest web --help       Start and configure the local Web Console\n"
+            "  forgrequest diff --help      Compare two saved responses or arbitrary files\n"
+            "  forgrequest update --help    Safely update an installed/source-tree copy\n"
+            "  forgrequest browser-install --help  Install Playwright browser runtimes\n\n"
+            "Common examples:\n"
+            "  forgrequest -u https://example.com --dry-run --show-request\n"
+            "  forgrequest -u https://example.com/api -X POST --json-file payload.json --include\n"
+            "  forgrequest --raw-request request.raw --show-request\n"
+            "  forgrequest --from-curl curl.txt --export-python\n"
+            "  forgrequest -u https://example.com --save-session case-001/ --report-html report.html\n"
+            "  forgrequest web --open\n"
+            "  forgrequest diff response-a.txt response-b.txt --json diff.json\n"
+            "  forgrequest -u https://example.com --browser --browser-wait-until networkidle\n"
+            "  forgrequest browser-install chromium\n"
+            "  forgrequest update --dry-run\n        "
+        ),
+    )
+
+    subparsers = parser.add_subparsers(
+        title="commands",
+        metavar="<command>",
+        dest="command",
+        help="Run 'forgrequest <command> --help' for command-specific options.",
+    )
+    subparsers.add_parser("web", help="Start the local Web Console with full CLI workflow coverage.", add_help=False)
+    subparsers.add_parser("diff", help="Compare two saved HTTP responses or arbitrary files.", add_help=False)
+    subparsers.add_parser("update", help="Safely update ForgRequest from GitHub or a local ZIP.", add_help=False)
+    subparsers.add_parser("browser-install", help="Install Playwright browser runtime(s) for JavaScript-rendered pages.", add_help=False)
+
+    general = parser.add_argument_group("general")
+    general.add_argument("--version", action="store_true", help="Print version and exit.")
+    general.add_argument("-c", "--config", default=DEFAULT_CONFIG_FILE, help="Default .config configuration file.")
+    general.add_argument("--init-config", action="store_true", help="Create a base configuration file and exit.")
+
+    target = parser.add_argument_group("target and method")
+    target.add_argument("-u", "--url", required=False, help="Target URL. Required unless --init-config, --raw-request, or --from-curl provides it.")
+    target.add_argument("-X", "--method", help="HTTP method: GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS, TRACE.")
+    target.add_argument("-A", "--user-agent", dest="user_agent", help="Custom User-Agent.")
+
+    import_group = parser.add_argument_group("request import and replay")
+    import_group.add_argument("--raw-request", help="Load a raw HTTP/1.1 request from file and replay it.")
+    import_group.add_argument("--raw-scheme", choices=["http", "https"], default="https", help="Scheme used when --raw-request has a relative target.")
+    import_group.add_argument("--from-curl", help="Import a curl command string or a file containing a curl command.")
+
+    headers_group = parser.add_argument_group("headers")
+    headers_group.add_argument("-H", "--headers", action="append", help="Headers as string. Repeatable. Example: -H 'X-Test: 1'")
+    headers_group.add_argument("--headers-file", help="Headers file: JSON, lines like 'Header: value', or curl -H fragments.")
+    headers_group.add_argument("--set-header", action="append", default=[], help="Set/replace a header after all other sources. Repeatable.")
+    headers_group.add_argument("--remove-header", action="append", default=[], help="Remove a header by name after all other sources. Repeatable.")
+
+    cookies_group = parser.add_argument_group("cookies")
+    cookies_group.add_argument("-b", "--cookies", action="append", help="Cookies as string. Repeatable. Example: -b 'a=b; c=d'")
+    cookies_group.add_argument("--cookies-file", help="Cookies file: Netscape, JSON, Cookie header, Set-Cookie lines, or name=value lines.")
+    cookies_group.add_argument("--load-cookies", help="Alias for --cookies-file, useful with --save-cookies/--cookie-jar flows.")
+    cookies_group.add_argument("--save-cookies", help="Save response/session cookies to a simple reusable cookie file.")
+    cookies_group.add_argument("--cookie-jar", help="Load cookies before the request and save updated cookies after the response.")
+    cookies_group.add_argument("--set-cookie", action="append", default=[], help="Set/replace a cookie after all other sources. Repeatable.")
+    cookies_group.add_argument("--remove-cookie", action="append", default=[], help="Remove a cookie by name after all other sources. Repeatable.")
+
+    query_group = parser.add_argument_group("query parameters")
+    query_group.add_argument("--set-query", action="append", default=[], help="Set/replace URL query parameter name=value. Repeatable.")
+    query_group.add_argument("--remove-query", action="append", default=[], help="Remove URL query parameter by name. Repeatable.")
+
+    body_group = parser.add_argument_group("payload and body helpers")
+    body_group.add_argument("-d", "--payload", help="Payload/body as string.")
+    body_group.add_argument("--payload-file", help="File to send as body bytes.")
+    body_group.add_argument("--json", dest="json_body", help="JSON body string. Sets Content-Type when absent.")
+    body_group.add_argument("--json-file", help="JSON body file. Validates JSON and sets Content-Type when absent.")
+    body_group.add_argument("--form", help="Form body string, for example 'a=1&b=2'. Sets Content-Type when absent.")
+    body_group.add_argument("--form-file", help="Form body file. Sets Content-Type when absent.")
+    body_group.add_argument("--binary-file", help="Binary file to send as body bytes. Alias specialized for non-text payloads.")
+    body_group.add_argument("--multipart", action="append", default=[], help="Multipart field. Use name=value or name=@file[;type=mime]. Repeatable.")
+    body_group.add_argument("--replace-body", action="append", default=[], help="Replace text in string/UTF-8 body using old=new. Repeatable.")
+
+    variables_group = parser.add_argument_group("template variables")
+    variables_group.add_argument("--var", action="append", default=[], help="Template variable KEY=value for {{KEY}} placeholders. Repeatable.")
+    variables_group.add_argument("--vars-file", help="File with KEY=value variables for {{KEY}} placeholders.")
+
+    browser_group = parser.add_argument_group("JavaScript browser rendering")
+    browser_group.add_argument("--browser", action="store_true", help="Render one GET page in a real browser with JavaScript enabled instead of using requests.")
+    browser_group.add_argument("--browser-engine", choices=["chromium", "firefox", "webkit"], help="Playwright browser engine used by --browser.")
+    browser_group.add_argument("--browser-headed", action="store_true", help="Show the browser window instead of running headless.")
+    browser_group.add_argument("--browser-wait-until", choices=["commit", "domcontentloaded", "load", "networkidle"], help="Navigation lifecycle event to wait for in browser mode.")
+    browser_group.add_argument("--browser-wait-selector", help="Wait for a CSS selector after navigation before capturing rendered HTML.")
+    browser_group.add_argument("--browser-wait-ms", type=int, help="Additional milliseconds to wait after navigation/selector completion.")
+    browser_group.add_argument("--browser-viewport", help="Browser viewport as WIDTHxHEIGHT, for example 1366x768.")
+    browser_group.add_argument("--browser-storage-state", help="Load Playwright storage-state JSON containing cookies/local storage.")
+    browser_group.add_argument("--save-browser-storage", help="Save updated browser storage-state JSON after execution.")
+    browser_group.add_argument("--browser-executable", help="Use an explicit Chrome/Chromium/Firefox executable path.")
+
+    network_group = parser.add_argument_group("network, redirects, proxy and TLS")
+    network_group.add_argument("--timeout", type=float, help="Approximate total request timeout in seconds.")
