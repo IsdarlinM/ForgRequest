@@ -87,9 +87,19 @@ elif [[ ! -f "$CONFIG_DIR/forgrequest.config" ]]; then
   "$PYTHON_BIN" "$INSTALL_DIR/forgrequest.py" --init-config -c "$CONFIG_DIR/forgrequest.config"
 fi
 
-if ! "$PYTHON_BIN" -c "import requests" >/dev/null 2>&1; then
-  echo "[+] Installing requests dependency for the current user..."
+if ! "$PYTHON_BIN" -c "import requests, playwright" >/dev/null 2>&1; then
+  echo "[+] Installing ForgRequest Python dependencies for the current user..."
   "$PYTHON_BIN" -m pip install --user -r "$INSTALL_DIR/requirements.txt"
+fi
+
+if command -v chromium >/dev/null 2>&1 || command -v chromium-browser >/dev/null 2>&1 || command -v google-chrome >/dev/null 2>&1 || command -v google-chrome-stable >/dev/null 2>&1; then
+  echo "[+] System Chromium/Chrome detected; browser mode can use it directly."
+else
+  echo "[+] Installing the Playwright Chromium runtime for JavaScript browser mode..."
+  if ! "$PYTHON_BIN" "$INSTALL_DIR/forgrequest.py" browser-install chromium; then
+    echo "[!] Chromium runtime installation failed. HTTP mode remains available." >&2
+    echo "    Retry later with: forgrequest browser-install chromium" >&2
+  fi
 fi
 
 cat > "$WRAPPER" <<EOF_WRAPPER

@@ -40,15 +40,27 @@ if not exist "%CONFIG_PATH%" (
   )
 )
 
-%PY_CMD% -c "import requests" >nul 2>nul
+%PY_CMD% -c "import requests, playwright" >nul 2>nul
 if errorlevel 1 (
-  echo [+] Installing requests dependency for the current user...
+  echo [+] Installing ForgRequest Python dependencies for the current user...
   if exist "%INSTALL_DIR%\requirements.txt" (
     %PY_CMD% -m pip install --user -r "%INSTALL_DIR%\requirements.txt"
   ) else (
     %PY_CMD% -m pip install --user requests
   )
   if errorlevel 1 exit /b 1
+)
+
+%PY_CMD% -c "import sys; sys.path.insert(0, r'%INSTALL_DIR%\src'); from forgrequest.browser import find_system_browser; raise SystemExit(0 if find_system_browser('chromium') else 1)" >nul 2>nul
+if errorlevel 1 (
+  echo [+] Installing the Playwright Chromium runtime for JavaScript browser mode...
+  %PY_CMD% "%INSTALL_DIR%\forgrequest.py" browser-install chromium
+  if errorlevel 1 (
+    echo [!] Chromium runtime installation failed. HTTP mode remains available.
+    echo     Retry later with: forgrequest browser-install chromium
+  )
+) else (
+  echo [+] System Chrome/Chromium/Edge detected; browser mode can use it directly.
 )
 
 (

@@ -26,6 +26,14 @@ FORGREQUEST_INSTALL_DIR=%LOCALAPPDATA%\Programs\forgrequest
 
 Open a new terminal if the current terminal does not immediately detect `forgrequest`.
 
+The installer also installs the Playwright Python dependency. It uses an existing Chrome, Chromium, or Edge executable when available; otherwise it attempts to download the Playwright Chromium runtime.
+
+Retry browser setup when needed:
+
+```cmd
+forgrequest browser-install chromium
+```
+
 Uninstall:
 
 ```cmd

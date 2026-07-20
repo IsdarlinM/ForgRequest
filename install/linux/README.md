@@ -30,6 +30,12 @@ FORGREQUEST_INSTALL_DIR="$HOME/.local/share/forgrequest"
 
 These variables allow the command to work immediately in new terminals and allow `forgrequest update` to locate the active installation safely.
 
+The installer also installs the Playwright Python dependency. It uses an existing system Chromium/Chrome when available; otherwise it attempts to download the Playwright Chromium runtime. Browser setup can be retried with:
+
+```bash
+forgrequest browser-install chromium
+```
+
 Uninstall:
 
 ```bash

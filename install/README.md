@@ -27,6 +27,7 @@ The Linux/macOS installer:
 - creates the command wrapper at `~/.local/bin/forgrequest`;
 - adds `export PATH="$HOME/.local/bin:$PATH"` to common shell startup files when missing;
 - sets `FORGREQUEST_CONFIG` and `FORGREQUEST_INSTALL_DIR` inside the installed wrapper;
+- installs Playwright support and uses or installs Chromium for JavaScript browser mode;
 - supports uninstall with `./install/linux/install_linux.sh --uninstall`.
 
 ## Windows
@@ -44,6 +45,7 @@ The Windows installer:
 - creates `%LOCALAPPDATA%\Programs\forgrequest\forgrequest.cmd`;
 - updates the user PATH through `HKCU\Environment`;
 - sets `FORGREQUEST_CONFIG` and `FORGREQUEST_INSTALL_DIR` as user environment variables;
+- installs Playwright support and uses Chrome/Edge or installs Chromium for JavaScript browser mode;
 - supports uninstall with `install\windows\install_windows.cmd --uninstall`.
 
 ## Update command
@@ -61,3 +63,12 @@ forgrequest update --dry-run
 ```
 
 The updater uses `FORGREQUEST_INSTALL_DIR` when available, creates a full backup, preserves local configuration/artifacts, and restores the previous installation if the update fails.
+
+## Browser runtime
+
+```bash
+forgrequest browser-install chromium
+forgrequest browser-install all
+```
+
+Browser runtime failure does not disable standard HTTP request replay.

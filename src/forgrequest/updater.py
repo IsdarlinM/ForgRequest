@@ -83,6 +83,7 @@ def build_update_parser() -> argparse.ArgumentParser:
     parser.add_argument("--backup-dir", help="Directory where backups are stored. Defaults to a sibling backup next to the install dir.")
     parser.add_argument("--keep-backup", action="store_true", help="Keep the backup after a successful update.")
     parser.add_argument("--no-deps", action="store_true", help="Do not run pip dependency installation after copying the update.")
+    parser.add_argument("--no-browser-runtime", action="store_true", help="Do not attempt to install Chromium when no system browser is available.")
     parser.add_argument("--dry-run", action="store_true", help="Validate source/destination and show planned actions without changing files.")
     parser.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT, help="Download timeout in seconds.")
     parser.add_argument("--yes", action="store_true", help="Skip the interactive confirmation prompt.")
@@ -267,6 +268,21 @@ def run_dependency_install(install_dir: Path) -> None:
         raise UpdateError("Dependency installation failed:\n" + result.stdout)
 
 
+def ensure_browser_runtime(install_dir: Path) -> None:
+    candidates = ["chromium", "chromium-browser", "google-chrome", "google-chrome-stable", "chrome", "msedge", "microsoft-edge"]
+    if any(shutil.which(name) for name in candidates):
+        print("[+] System Chromium/Chrome/Edge detected; browser mode can use it directly.")
+        return
+    launcher = install_dir / "forgrequest.py"
+    if not launcher.is_file():
+        return
+    print("[+] Installing Playwright Chromium runtime for JavaScript browser mode...")
+    result = subprocess.run([sys.executable, str(launcher), "browser-install", "chromium"])
+    if result.returncode != 0:
+        print("[!] Chromium runtime installation failed. HTTP mode remains available.")
+        print("    Retry later with: forgrequest browser-install chromium")
+
+
 def prompt_confirmation(install_dir: Path, source_label: str, yes: bool) -> None:
     if yes:
         return
@@ -348,6 +364,8 @@ def update_from_source_zip(args: argparse.Namespace) -> int:
             if not args.no_deps:
                 print("[+] Verifying dependencies...")
                 run_dependency_install(install_dir)
+            if not args.no_browser_runtime:
+                ensure_browser_runtime(install_dir)
         except Exception:
             print("[!] Update failed. Restoring previous installation...", file=sys.stderr)
             if install_dir.exists():
