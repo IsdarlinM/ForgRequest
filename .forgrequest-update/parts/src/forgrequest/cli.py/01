@@ -1,0 +1,408 @@
+
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        ns = parse_netscape_cookie_line(line)
+        if ns:
+            name, value = ns
+            if name:
+                cookies[name] = value
+            continue
+        if line.lower().startswith("cookie:"):
+            line = line.split(":", 1)[1].strip()
+        elif line.lower().startswith("set-cookie:"):
+            line = line.split(":", 1)[1].strip()
+        for part in split_semicolon_aware(line):
+            if "=" not in part:
+                continue
+            name, value = part.split("=", 1)
+            name = name.strip()
+            value = value.strip()
+            if not name or name.lower() in COOKIE_ATTRS:
+                continue
+            cookies[name] = value
+    return cookies
+
+
+def merge_dicts(*dicts: Optional[dict[str, Any]]) -> dict[str, str]:
+    merged: dict[str, str] = {}
+    for dct in dicts:
+        if not dct:
+            continue
+        for k, v in dct.items():
+            if k is not None:
+                merged[str(k)] = str(v)
+    return merged
+
+
+def is_sensitive_name(name: str) -> bool:
+    return name.lower() in SENSITIVE_KEYS or bool(SENSITIVE_NAME_PATTERNS.search(name))
+
+
+def redact_value(value: Any) -> str:
+    text = str(value)
+    if len(text) <= 8:
+        return "<redacted>"
+    return f"{text[:3]}***{text[-4:]}"
+
+
+def redact_mapping(mapping: dict[str, str]) -> dict[str, str]:
+    return {k: ("<redacted>" if is_sensitive_name(k) else v) for k, v in mapping.items()}
+
+
+def redact_url(url: str) -> str:
+    parsed = urlparse(url)
+    if not parsed.query:
+        return url
+    pairs = parse_qsl(parsed.query, keep_blank_values=True)
+    redacted = [(k, "<redacted>" if is_sensitive_name(k) else v) for k, v in pairs]
+    return urlunparse(parsed._replace(query=urlencode(redacted, doseq=True)))
+
+
+def redact_text(text: str) -> str:
+    masked = text
+    masked = re.sub(r"(?i)(Authorization\s*:\s*Bearer\s+)[^\s\r\n]+", r"\1<redacted>", masked)
+    masked = re.sub(r"(?i)(Authorization\s*:\s*Basic\s+)[^\s\r\n]+", r"\1<redacted>", masked)
+    masked = re.sub(r"(?i)(Cookie\s*:\s*)[^\r\n]+", r"\1<redacted>", masked)
+    masked = re.sub(r"(?i)(Set-Cookie\s*:\s*)[^\r\n]+", r"\1<redacted>", masked)
+    masked = re.sub(r"(?i)((?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key)\s*[=:]\s*)[^&\s,\"'}]+", r"\1<redacted>", masked)
+    return masked
+
+
+def has_header(headers: dict[str, str], name: str) -> bool:
+    wanted = name.lower()
+    return any(key.lower() == wanted for key in headers)
+
+
+def remove_header_case_insensitive(headers: dict[str, str], name: str) -> None:
+    wanted = name.lower()
+    for key in list(headers.keys()):
+        if key.lower() == wanted:
+            headers.pop(key, None)
+
+
+def validate_url(url: str) -> None:
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"}:
+        die("Invalid URL. It must start with http:// or https://")
+    if not parsed.netloc:
+        die("Invalid URL. Missing host.")
+
+
+def update_query(url: str, set_items: list[str], remove_items: list[str]) -> str:
+    parsed = urlparse(url)
+    query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    for name in remove_items:
+        query.pop(name, None)
+    for item in set_items:
+        if "=" not in item:
+            die(f"Invalid query modifier, use name=value: {item!r}")
+        name, value = item.split("=", 1)
+        if not name:
+            die("Query parameter name cannot be empty")
+        query[name] = value
+    return urlunparse(parsed._replace(query=urlencode(query, doseq=True)))
+
+
+def new_config_parser() -> configparser.ConfigParser:
+    parser = configparser.ConfigParser(interpolation=None)
+    parser.optionxform = str
+    return parser
+
+
+def load_config(path: str | Path) -> dict[str, Any]:
+    p = Path(path).expanduser()
+    if not p.exists():
+        return {}
+    if p.suffix.lower() != ".config":
+        die("The configuration file must use the .config extension, for example: forgrequest.config")
+    parser = new_config_parser()
+    try:
+        read_files = parser.read(p, encoding="utf-8")
+    except configparser.Error as exc:
+        die(f"Invalid .config file at {p}: {exc}")
+    except OSError as exc:
+        die(f"Could not read config {p}: {exc}")
+    if not read_files:
+        die(f"Could not load config: {p}")
+    if parser.has_option("request", "url") and parser.get("request", "url").strip():
+        die("For operational safety, the URL must not be stored in the configuration file. Use --url.")
+    cfg: dict[str, Any] = {}
+    if parser.has_section("request"):
+        cfg.update({k: v for k, v in parser.items("request")})
+    if parser.has_section("headers"):
+        cfg["headers"] = {k: v for k, v in parser.items("headers")}
+    if parser.has_section("cookies"):
+        cfg["cookies"] = {k: v for k, v in parser.items("cookies")}
+    return cfg
+
+
+def write_sample_config(path: str | Path) -> None:
+    p = Path(path).expanduser()
+    if p.suffix.lower() != ".config":
+        die("Use a path with the .config extension, for example: forgrequest.config")
+    if p.exists():
+        die(f"Already exists: {p}. I will not overwrite it.")
+    write_text(p, SAMPLE_CONFIG)
+    print(f"[+] Config created: {p}")
+
+
+def get_config_str(cfg: dict[str, Any], key: str, default: str = "") -> str:
+    value = cfg.get(key, default)
+    return default if value is None else str(value)
+
+
+def collect_argument_chunks(value: Optional[list[str] | str]) -> list[str]:
+    if not value:
+        return []
+    if isinstance(value, str):
+        return [value]
+    return [item for item in value if item]
+
+
+def load_vars_file(path: str | Path) -> dict[str, str]:
+    values: dict[str, str] = {}
+    text = read_text_file(path)
+    for line in text.splitlines():
+        raw = line.strip()
+        if not raw or raw.startswith("#"):
+            continue
+        if raw.startswith("export "):
+            raw = raw[len("export ") :].strip()
+        if "=" not in raw:
+            die(f"Invalid vars line, use KEY=value: {line!r}")
+        key, value = raw.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip("'\"")
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+            die(f"Invalid variable name: {key!r}")
+        values[key] = value
+    return values
+
+
+def parse_var_args(items: list[str]) -> dict[str, str]:
+    values: dict[str, str] = {}
+    for item in items:
+        if "=" not in item:
+            die(f"Invalid variable, use KEY=value: {item!r}")
+        key, value = item.split("=", 1)
+        key = key.strip()
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+            die(f"Invalid variable name: {key!r}")
+        values[key] = value
+    return values
+
+
+def apply_vars_text(text: str, variables: dict[str, str]) -> str:
+    def replace(match: re.Match[str]) -> str:
+        key = match.group(1)
+        if key not in variables:
+            die(f"Missing variable {key!r}. Provide it with --var {key}=value or --vars-file.")
+        return variables[key]
+
+    return VARIABLE_RE.sub(replace, text)
+
+
+def apply_vars_mapping(mapping: dict[str, str], variables: dict[str, str]) -> dict[str, str]:
+    if not variables:
+        return mapping
+    return {apply_vars_text(k, variables): apply_vars_text(v, variables) for k, v in mapping.items()}
+
+
+def parse_raw_http_request_bytes(raw: bytes, scheme: str = "https", url_override: str = "") -> RawRequestData:
+    separator = b"\r\n\r\n" if b"\r\n\r\n" in raw else b"\n\n"
+    if separator in raw:
+        head, body = raw.split(separator, 1)
+    else:
+        head, body = raw, b""
+    try:
+        lines = head.decode("latin-1").splitlines()
+    except UnicodeDecodeError as exc:
+        die(f"Raw request headers are not decodable as latin-1: {exc}")
+    if not lines:
+        die("Raw request is empty")
+    request_line = lines[0].strip()
+    parts = request_line.split()
+    if len(parts) < 2:
+        die("Invalid raw request line. Expected: METHOD /path HTTP/1.1")
+    method = parts[0].upper()
+    target = parts[1]
+    if method not in ALLOWED_METHODS:
+        die(f"Unsupported method in raw request: {method}")
+
+    headers: dict[str, str] = {}
+    current_name: str | None = None
+    for line in lines[1:]:
+        if not line:
+            continue
+        if line[0] in " \t" and current_name:
+            headers[current_name] += " " + line.strip()
+            continue
+        if ":" not in line:
+            die(f"Invalid raw header line: {line!r}")
+        name, value = line.split(":", 1)
+        name = name.strip()
+        value = value.strip()
+        if not re.fullmatch(HEADER_NAME_RE, name):
+            die(f"Invalid raw header name: {name!r}")
+        headers[name] = value
+        current_name = name
+
+    if url_override:
+        url = url_override
+    elif target.startswith("http://") or target.startswith("https://"):
+        url = target
+    else:
+        host = next((v for k, v in headers.items() if k.lower() == "host"), "")
+        if not host:
+            die("Raw request with relative path requires a Host header or --url override")
+        if not target.startswith("/"):
+            target = "/" + target
+        url = f"{scheme}://{host}{target}"
+    validate_url(url)
+    return RawRequestData(method=method, url=url, headers=headers, body=body)
+
+
+def parse_raw_http_request_file(path: str, scheme: str, url_override: str = "") -> RawRequestData:
+    return parse_raw_http_request_bytes(read_bytes_file(path), scheme=scheme, url_override=url_override)
+
+
+def parse_curl_command(command: str) -> dict[str, Any]:
+    try:
+        tokens = shlex.split(command, posix=True)
+    except ValueError as exc:
+        die(f"Could not parse curl command: {exc}")
+    if tokens and tokens[0].lower() == "curl":
+        tokens = tokens[1:]
+    result: dict[str, Any] = {
+        "headers": [],
+        "cookies": [],
+        "payload_parts": [],
+        "url": "",
+        "method": "",
+        "insecure": False,
+        "follow_redirects": False,
+        "user_agent": "",
+    }
+    i = 0
+    while i < len(tokens):
+        token = tokens[i]
+        if token in {"-X", "--request"}:
+            i += 1
+            if i >= len(tokens):
+                die("curl parser: missing method after -X/--request")
+            result["method"] = tokens[i].upper()
+        elif token.startswith("-X") and len(token) > 2:
+            result["method"] = token[2:].upper()
+        elif token in {"-H", "--header"}:
+            i += 1
+            if i >= len(tokens):
+                die("curl parser: missing header after -H/--header")
+            result["headers"].append(tokens[i])
+        elif token in {"-b", "--cookie", "--cookie-raw"}:
+            i += 1
+            if i >= len(tokens):
+                die("curl parser: missing cookie after -b/--cookie")
+            result["cookies"].append(tokens[i])
+        elif token in {"-A", "--user-agent"}:
+            i += 1
+            if i >= len(tokens):
+                die("curl parser: missing user-agent after -A/--user-agent")
+            result["user_agent"] = tokens[i]
+        elif token in {"-d", "--data", "--data-raw", "--data-binary", "--data-ascii", "--data-urlencode"}:
+            i += 1
+            if i >= len(tokens):
+                die(f"curl parser: missing data after {token}")
+            value = tokens[i]
+            if value.startswith("@") and token == "--data-binary":
+                result["payload_parts"].append(read_bytes_file(value[1:]))
+            else:
+                result["payload_parts"].append(value)
+            if not result["method"]:
+                result["method"] = "POST"
+        elif token in {"-k", "--insecure"}:
+            result["insecure"] = True
+        elif token in {"-L", "--location"}:
+            result["follow_redirects"] = True
+        elif token == "--url":
+            i += 1
+            if i >= len(tokens):
+                die("curl parser: missing URL after --url")
+            result["url"] = tokens[i]
+        elif token in {"-o", "--output", "--connect-timeout", "--max-time"}:
+            i += 1  # accepted but ignored here; CLI has native options
+        elif token.startswith("-"):
+            # Non-fatal: many curl flags have no direct requests equivalent.
+            pass
+        else:
+            if token.startswith("http://") or token.startswith("https://"):
+                result["url"] = token
+        i += 1
+
+    if result["payload_parts"]:
+        if all(isinstance(part, bytes) for part in result["payload_parts"]):
+            result["payload"] = b"&".join(result["payload_parts"])
+        else:
+            result["payload"] = "&".join(part.decode("utf-8", errors="replace") if isinstance(part, bytes) else str(part) for part in result["payload_parts"])
+    return result
+
+
+def apply_curl_to_args(args: argparse.Namespace) -> argparse.Namespace:
+    if not args.from_curl:
+        return args
+    raw = args.from_curl
+    if Path(raw).expanduser().is_file():
+        raw = read_text_file(raw)
+    parsed = parse_curl_command(raw)
+    if not args.url and parsed.get("url"):
+        args.url = parsed["url"]
+    if not args.method and parsed.get("method"):
+        args.method = parsed["method"]
+    if not args.user_agent and parsed.get("user_agent"):
+        args.user_agent = parsed["user_agent"]
+    if parsed.get("headers"):
+        args.headers = (args.headers or []) + list(parsed["headers"])
+    if parsed.get("cookies"):
+        args.cookies = (args.cookies or []) + list(parsed["cookies"])
+    if args.payload is None and not args.payload_file and parsed.get("payload") is not None:
+        args.payload = parsed["payload"]
+    if parsed.get("insecure"):
+        args.insecure = True
+    if parsed.get("follow_redirects"):
+        args.no_redirects = False
+    return args
+
+
+def parse_multipart_item(item: str) -> MultipartPart:
+    if "=" not in item:
+        die(f"Invalid multipart value. Use name=value or name=@file: {item!r}")
+    name, raw_value = item.split("=", 1)
+    name = name.strip()
+    if not name:
+        die("Multipart field name cannot be empty")
+    content_type = None
+    value_part = raw_value
+    if ";type=" in raw_value:
+        value_part, content_type = raw_value.split(";type=", 1)
+        content_type = content_type.strip() or None
+    if value_part.startswith("@"):
+        file_path = value_part[1:]
+        data = read_bytes_file(file_path)
+        return MultipartPart(name=name, value=data, filename=Path(file_path).name, content_type=content_type)
+    return MultipartPart(name=name, value=value_part)
+
+
+def safe_input(prompt: str) -> str:
+    try:
+        return input(prompt)
+    except EOFError:
+        die("Interactive input cancelled")
+
+
+def prompt_text(label: str, default: str = "", required: bool = False) -> str:
+    suffix = f" [{default}]" if default else ""
+    while True:
+        value = safe_input(f"{label}{suffix}: ").strip()
+        if value:
+            return value
