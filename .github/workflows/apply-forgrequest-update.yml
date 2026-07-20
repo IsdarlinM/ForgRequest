@@ -18,20 +18,21 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Extract release source
+      - name: Assemble release source
         shell: bash
         run: |
           set -Eeuo pipefail
-          mkdir -p /tmp/forgrequest-release
-          cat .forgrequest-update/chunk-* | base64 --decode > /tmp/forgrequest-release.tar.gz
-          tar -xzf /tmp/forgrequest-release.tar.gz -C /tmp/forgrequest-release
-          source_dir="$(find /tmp/forgrequest-release -mindepth 1 -maxdepth 1 -type d | head -n 1)"
-          test -n "$source_dir"
-          rsync -a --delete \
-            --exclude '.git/' \
-            --exclude '.github/' \
-            --exclude '.forgrequest-update/' \
-            "$source_dir/" ./
+          shopt -s nullglob
+          if [[ -d .forgrequest-update/parts ]]; then
+            while IFS= read -r -d '' part_dir; do
+              rel="${part_dir#.forgrequest-update/parts/}"
+              target=".forgrequest-update/project/$rel"
+              mkdir -p "$(dirname "$target")"
+              cat "$part_dir"/* > "$target"
+            done < <(find .forgrequest-update/parts -type d -links 2 -print0)
+          fi
+          test -d .forgrequest-update/project
+          rsync -a .forgrequest-update/project/ ./
           rm -rf .forgrequest-update
           rm -f .github/workflows/apply-forgrequest-update.yml
 
@@ -47,6 +48,8 @@ jobs:
           python forgrequest.py update --help >/dev/null
           python forgrequest.py browser-install --help >/dev/null
           python forgrequest.py -u https://example.com --dry-run --no-logo --no-color >/dev/null
+          ! grep -Eiq '^## (What changed|Previous v[0-9])' README.md
+          cmp -s README.md docs/README.md
 
       - name: Commit release
         shell: bash
