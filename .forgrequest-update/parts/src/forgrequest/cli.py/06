@@ -1,0 +1,49 @@
+    for key, value in summary.items():
+        print(f"{key}: {value}")
+    if not same and not args.no_body_diff:
+        print("\n[Unified diff]")
+        for line in difflib.unified_diff(left_text, right_text, fromfile=str(left_path), tofile=str(right_path), lineterm="", n=args.context):
+            print(line)
+    if args.json_output:
+        save_json_report(args.json_output, summary)
+        print(f"[+] Diff JSON saved to: {args.json_output}")
+    return 0 if same else 3
+
+
+def main(argv: Optional[list[str]] = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] == "diff":
+        return diff_files(argv[1:])
+    if argv and argv[0] == "web":
+        from .webui import run_web
+        return run_web(argv[1:])
+    if argv and argv[0] == "update":
+        from .updater import run_update
+        return run_update(argv[1:])
+    if argv and argv[0] == "browser-install":
+        return install_browser_runtime(argv[1:])
+
+    parser = build_parser()
+    args = parser.parse_args(argv)
+
+    if args.version:
+        print(f"forgrequest {VERSION} :: signature {SIGNATURE}")
+        return 0
+
+    if args.init_config:
+        write_sample_config(args.config)
+        return 0
+
+    args = apply_curl_to_args(args)
+    cfg_file = load_config(args.config)
+    if args.interactive or parse_bool(cfg_file.get("interactive", False)):
+        args = interactive_collect(args, cfg_file)
+
+    cfg = resolve_config(args)
+    if cfg.show_logo:
+        print(render_logo(cfg.color_enabled))
+    return send_request(cfg)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
