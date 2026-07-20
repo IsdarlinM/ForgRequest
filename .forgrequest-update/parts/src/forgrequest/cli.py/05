@@ -1,0 +1,312 @@
+    if resp is not None:
+        response_headers = dict(resp.headers)
+        report["response"] = {
+            "status_code": resp.status_code,
+            "reason": resp.reason,
+            "url": redact_url(resp.url) if cfg.redact_reports else resp.url,
+            "headers": response_headers,
+            "body_bytes": len(resp.content),
+            "content_type": resp.headers.get("Content-Type", ""),
+            "redirects": [
+                {
+                    "status_code": item.status_code,
+                    "url": redact_url(item.url) if cfg.redact_reports else item.url,
+                    "location": item.headers.get("Location", ""),
+                }
+                for item in resp.history
+            ],
+        }
+    if result.engine_metadata:
+        browser_meta = dict(result.engine_metadata)
+        if cfg.redact_reports and isinstance(browser_meta.get("cookies"), list):
+            browser_meta["cookies"] = [
+                {**cookie, "value": "<redacted>"}
+                for cookie in browser_meta["cookies"]
+                if isinstance(cookie, dict)
+            ]
+        if cfg.redact_reports and isinstance(browser_meta.get("storage_state"), dict):
+            storage_state = dict(browser_meta["storage_state"])
+            storage_state["cookies"] = [
+                {**cookie, "value": "<redacted>"}
+                for cookie in storage_state.get("cookies", [])
+                if isinstance(cookie, dict)
+            ]
+            browser_meta["storage_state"] = storage_state
+        report["browser"] = browser_meta
+    return report
+
+
+def save_json_report(path: str | Path, report: dict[str, Any]) -> None:
+    write_text(path, json.dumps(report, indent=2, ensure_ascii=False) + "\n")
+
+
+def save_html_report(path: str | Path, report: dict[str, Any]) -> None:
+    title = "Forgery HTTP Request Report"
+    request = report.get("request", {})
+    response = report.get("response", {})
+    execution = report.get("execution", {})
+    browser = report.get("browser", {})
+    engine = report.get("engine", "http")
+    status = response.get("status_code", "dry-run")
+    browser_title = browser.get("title", "") if isinstance(browser, dict) else ""
+    json_report = html.escape(json.dumps(report, indent=2, ensure_ascii=False))
+    document = f"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{title}</title>
+<style>
+:root {{ --bg:#0b1020; --panel:#111a2e; --line:#233454; --text:#d8e6f3; --muted:#8fa7c2; --accent:#4dd4d7; --ok:#91d18b; --warn:#f3c969; }}
+body {{ margin:0; font-family:Segoe UI, Roboto, Arial, sans-serif; background:var(--bg); color:var(--text); }}
+main {{ max-width:1100px; margin:0 auto; padding:32px; }}
+.card {{ background:var(--panel); border:1px solid var(--line); border-radius:16px; padding:20px; margin:18px 0; box-shadow:0 16px 32px rgba(0,0,0,.25); }}
+h1,h2 {{ margin-top:0; }}
+h1 {{ color:var(--accent); }}
+.grid {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px; }}
+.kv {{ border:1px solid var(--line); border-radius:12px; padding:12px; }}
+.kv b {{ display:block; color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.08em; }}
+pre {{ overflow:auto; background:#07101f; border:1px solid var(--line); border-radius:12px; padding:16px; }}
+.badge {{ display:inline-block; border:1px solid var(--accent); color:var(--accent); border-radius:999px; padding:4px 10px; }}
+</style>
+</head>
+<body>
+<main>
+<h1>Forgery HTTP Request Report</h1>
+<p class="badge">forgrequest v{html.escape(str(report.get('version', '')))} :: signature {html.escape(str(report.get('signature', '')))}</p>
+<div class="card grid">
+  <div class="kv"><b>Engine</b>{html.escape(str(engine))}</div>
+  <div class="kv"><b>Method</b>{html.escape(str(request.get('method', '')))}</div>
+  <div class="kv"><b>Status</b>{html.escape(str(status))}</div>
+  <div class="kv"><b>Elapsed</b>{html.escape(str(execution.get('elapsed_seconds', '')))}s</div>
+  <div class="kv"><b>Body complete</b>{html.escape(str(execution.get('body_complete', '')))}</div>
+  <div class="kv"><b>Page title</b>{html.escape(str(browser_title or 'n/a'))}</div>
+</div>
+<div class="card"><h2>Request URL</h2><pre>{html.escape(str(request.get('url', '')))}</pre></div>
+<div class="card"><h2>Response URL</h2><pre>{html.escape(str(response.get('url', '')))}</pre></div>
+<div class="card"><h2>Full metadata</h2><pre>{json_report}</pre></div>
+</main>
+</body>
+</html>
+"""
+    write_text(path, document)
+
+
+def save_session_artifacts(directory: str | Path, result: ExecutionResult, cfg: RequestConfig, report: dict[str, Any]) -> None:
+    root = Path(directory).expanduser()
+    try:
+        root.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        die(f"Could not create session directory {root}: {exc}")
+    write_text(root / "request.raw", result.request_raw)
+    write_text(root / "request.curl", result.request_curl + "\n")
+    write_text(root / "request.py", result.request_python)
+    save_json_report(root / "metadata.json", report)
+    if result.response is not None:
+        write_text(root / "response.headers", response_headers_text(result.response))
+        write_bytes(root / "response.body", result.response.content)
+    if result.engine_metadata:
+        if result.engine_metadata.get("console_messages"):
+            save_json_report(root / "browser-console.json", {"messages": result.engine_metadata["console_messages"]})
+        if result.engine_metadata.get("page_errors"):
+            save_json_report(root / "browser-page-errors.json", {"errors": result.engine_metadata["page_errors"]})
+        if result.engine_metadata.get("storage_state"):
+            save_json_report(root / "browser-storage-state.json", result.engine_metadata["storage_state"])
+    write_text(root / "README.txt", "Saved by forgrequest. This directory may contain sensitive request/response data.\n")
+
+
+def save_browser_cookie_file(path: str | Path, cookies: list[dict[str, Any]]) -> None:
+    lines = ["# forgrequest browser cookie file", "# Format: name=value"]
+    for cookie in cookies:
+        name = str(cookie.get("name", "")).strip()
+        if name:
+            lines.append(f"{name}={cookie.get('value', '')}")
+    write_text(path, "\n".join(lines) + "\n")
+
+
+def print_browser_summary(metadata: dict[str, Any], cfg: RequestConfig) -> None:
+    label = style("[JavaScript browser]", "cyan", "bold", enabled=cfg.color_enabled)
+    mode = "headless" if metadata.get("headless", True) else "headed"
+    print(f"\n{label} {metadata.get('browser_name', cfg.browser_engine)} | {mode} | wait={metadata.get('wait_until', cfg.browser_wait_until)}")
+    if metadata.get("title"):
+        print(f"{style('[Page title]', 'blue', enabled=cfg.color_enabled)} {metadata['title']}")
+    console_count = len(metadata.get("console_messages", []))
+    error_count = len(metadata.get("page_errors", []))
+    print(f"{style('[Browser events]', 'blue', enabled=cfg.color_enabled)} console={console_count} | page-errors={error_count}")
+
+
+
+def handle_output_artifacts(result: ExecutionResult, cfg: RequestConfig, session: requests.Session) -> None:
+    if cfg.save_prepared_request:
+        write_text(cfg.save_prepared_request, result.request_raw)
+        print(style(f"[+] Prepared request saved to: {cfg.save_prepared_request}", "green", enabled=cfg.color_enabled))
+    if cfg.export_curl:
+        print("\n" + style("[cURL]", "cyan", "bold", enabled=cfg.color_enabled))
+        print(result.request_curl)
+    if cfg.export_python:
+        heading = "[Python Playwright]" if cfg.browser else "[Python requests]"
+        print("\n" + style(heading, "cyan", "bold", enabled=cfg.color_enabled))
+        print(result.request_python)
+    if cfg.save_cookies and result.response is not None:
+        if cfg.browser and result.engine_metadata.get("cookies") is not None:
+            save_browser_cookie_file(cfg.save_cookies, result.engine_metadata.get("cookies", []))
+        else:
+            save_cookie_file(cfg.save_cookies, session)
+        print(style(f"[+] Cookies saved to: {cfg.save_cookies}", "green", enabled=cfg.color_enabled))
+    if cfg.save_browser_storage and result.engine_metadata.get("storage_state"):
+        save_json_report(cfg.save_browser_storage, result.engine_metadata["storage_state"])
+        print(style(f"[+] Browser storage state saved to: {cfg.save_browser_storage}", "green", enabled=cfg.color_enabled))
+
+    if cfg.report_json or cfg.report_html or cfg.save_session:
+        report = build_report(result, cfg)
+        if cfg.report_json:
+            save_json_report(cfg.report_json, report)
+            print(style(f"[+] JSON report saved to: {cfg.report_json}", "green", enabled=cfg.color_enabled))
+        if cfg.report_html:
+            save_html_report(cfg.report_html, report)
+            print(style(f"[+] HTML report saved to: {cfg.report_html}", "green", enabled=cfg.color_enabled))
+        if cfg.save_session:
+            save_session_artifacts(cfg.save_session, result, cfg, report)
+            print(style(f"[+] Session artifacts saved to: {cfg.save_session}", "green", enabled=cfg.color_enabled))
+
+
+def send_request(cfg: RequestConfig) -> int:
+    session = build_session(cfg)
+    prepared = prepare_request(session, cfg)
+    request_raw = prepared_to_raw(prepared, redact=False)
+    request_curl = prepared_to_curl(prepared, redact=False)
+    request_python = (
+        prepared_to_playwright_python(prepared, cfg, redact=False)
+        if cfg.browser
+        else prepared_to_python(prepared, cfg, redact=False)
+    )
+
+    if cfg.show_request or cfg.dry_run:
+        print_prepared_request(prepared, cfg)
+        if cfg.browser:
+            print(
+                style(
+                    f"[Browser plan] engine={cfg.browser_engine} | "
+                    f"{'headless' if cfg.browser_headless else 'headed'} | "
+                    f"wait={cfg.browser_wait_until} | viewport={cfg.browser_viewport}",
+                    "cyan",
+                    enabled=cfg.color_enabled,
+                )
+            )
+
+    if cfg.browser and cfg.method != "GET":
+        die("JavaScript browser mode supports GET page navigation only. Use the standard HTTP engine for other methods.")
+    if cfg.browser and not cfg.follow_redirects:
+        die("JavaScript browser mode follows browser navigation redirects. Remove --no-redirects or use the standard HTTP engine.")
+    if cfg.browser and (cfg.payload not in (None, "", b"") or cfg.multipart):
+        die("JavaScript browser mode performs GET page navigation and does not send a request body. Use the standard HTTP engine for body-based requests.")
+
+    if cfg.dry_run:
+        metadata = {
+            "browser_name": cfg.browser_engine,
+            "headless": cfg.browser_headless,
+            "wait_until": cfg.browser_wait_until,
+            "wait_selector": cfg.browser_wait_selector,
+            "wait_ms": cfg.browser_wait_ms,
+            "viewport": cfg.browser_viewport,
+        } if cfg.browser else {}
+        result = ExecutionResult(None, 0.0, True, None, prepared, request_raw, request_curl, request_python, metadata)
+        handle_output_artifacts(result, cfg, session)
+        print("\n" + style("[+] Dry-run active: request was not sent.", "green", enabled=cfg.color_enabled))
+        return 0
+
+    if cfg.browser:
+        from .browser import BrowserSupportError, run_browser_navigation
+
+        start = time.perf_counter()
+        try:
+            browser_result = run_browser_navigation(cfg)
+        except BrowserSupportError as exc:
+            die(str(exc), 2)
+        elapsed = time.perf_counter() - start
+        metadata = {
+            "title": browser_result.title,
+            "browser_name": browser_result.browser_name,
+            "headless": browser_result.headless,
+            "wait_until": browser_result.wait_until,
+            "wait_selector": cfg.browser_wait_selector,
+            "wait_ms": cfg.browser_wait_ms,
+            "viewport": cfg.browser_viewport,
+            "javascript_enabled": browser_result.javascript_enabled,
+            "console_messages": browser_result.console_messages,
+            "page_errors": browser_result.page_errors,
+            "cookies": browser_result.cookies,
+            "storage_state": browser_result.storage_state,
+        }
+        print_browser_summary(metadata, cfg)
+        print_response(browser_result.response, cfg, elapsed)
+        result = ExecutionResult(
+            browser_result.response,
+            elapsed,
+            True,
+            None,
+            prepared,
+            request_raw,
+            request_curl,
+            request_python,
+            metadata,
+        )
+        handle_output_artifacts(result, cfg, session)
+        return 0 if 200 <= browser_result.response.status_code < 400 else 3
+
+    settings = session.merge_environment_settings(
+        prepared.url,
+        proxies=make_proxies(cfg.proxy),
+        stream=True,
+        verify=cfg.verify_tls,
+        cert=None,
+    )
+
+    body_complete = True
+    body_warning: str | None = None
+    start = time.perf_counter()
+    try:
+        resp = session.send(prepared, timeout=cfg.timeout, allow_redirects=cfg.follow_redirects, **settings)
+        body_complete, body_warning = read_response_body(resp)
+    except requests.exceptions.SSLError as exc:
+        die(f"TLS error: {exc}. In lab environments you can use --insecure.")
+    except requests.exceptions.Timeout:
+        die(f"Timeout after {cfg.timeout}s")
+    except requests.exceptions.ConnectionError as exc:
+        die(f"Connection error: {exc}")
+    except requests.exceptions.RequestException as exc:
+        die(f"HTTP error: {exc}")
+    elapsed = time.perf_counter() - start
+
+    print_response(resp, cfg, elapsed, body_warning)
+    result = ExecutionResult(resp, elapsed, body_complete, body_warning, prepared, request_raw, request_curl, request_python)
+    handle_output_artifacts(result, cfg, session)
+    if not body_complete:
+        return 4
+    return 0 if 200 <= resp.status_code < 400 else 3
+
+
+def diff_files(argv: list[str]) -> int:
+    parser = build_diff_parser()
+    args = parser.parse_args(argv)
+    left_path = Path(args.left).expanduser()
+    right_path = Path(args.right).expanduser()
+    if not left_path.is_file():
+        die(f"File not found: {left_path}")
+    if not right_path.is_file():
+        die(f"File not found: {right_path}")
+    left_bytes = left_path.read_bytes()
+    right_bytes = right_path.read_bytes()
+    left_text = left_bytes.decode("utf-8", errors="replace").splitlines()
+    right_text = right_bytes.decode("utf-8", errors="replace").splitlines()
+    same = left_bytes == right_bytes
+    summary = {
+        "left": str(left_path),
+        "right": str(right_path),
+        "same": same,
+        "left_bytes": len(left_bytes),
+        "right_bytes": len(right_bytes),
+        "left_lines": len(left_text),
+        "right_lines": len(right_text),
+    }
+    print("[Diff summary]")
