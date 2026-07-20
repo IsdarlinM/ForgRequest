@@ -8,8 +8,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 SRC = ROOT / "src"
-if str(SRC) not in sys.path:
-    sys.path.insert(0, str(SRC))
+src_path = str(SRC)
+sys.path[:] = [entry for entry in sys.path if entry != src_path]
+sys.path.insert(0, src_path)
 
 from forgrequest.cli import main
 
