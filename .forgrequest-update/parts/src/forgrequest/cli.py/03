@@ -1,0 +1,278 @@
+    network_group.add_argument("--no-redirects", action="store_true", help="Do not follow HTTP redirects.")
+    network_group.add_argument("--show-redirect-chain", action="store_true", help="Print the redirect chain when redirects are followed.")
+    network_group.add_argument("--insecure", action="store_true", help="Do not verify TLS. Use only in lab environments.")
+    network_group.add_argument("--proxy", help="HTTP/HTTPS proxy. Example: http://127.0.0.1:8080")
+    network_group.add_argument("--no-env-proxy", action="store_true", help="Ignore proxy/CA settings from environment variables.")
+
+    output_group = parser.add_argument_group("output, display and exports")
+    output_group.add_argument("--include", action="store_true", help="Show response headers along with the body.")
+    output_group.add_argument("--show-request", action="store_true", help="Show the prepared request with secrets redacted.")
+    output_group.add_argument("--dry-run", action="store_true", help="Prepare and show the request without sending it.")
+    output_group.add_argument("-o", "--output", help="Save response body to file.")
+    output_group.add_argument("--raw", action="store_true", help="Do not pretty-print JSON responses.")
+    output_group.add_argument("--no-logo", action="store_true", help="Do not show the logo.")
+    output_group.add_argument("--save-prepared-request", help="Save the prepared HTTP request as raw HTTP/1.1 text.")
+    output_group.add_argument("--export-curl", action="store_true", help="Print an equivalent curl command for the prepared request.")
+    output_group.add_argument("--export-python", action="store_true", help="Print a Python reproduction snippet for the selected HTTP or browser engine.")
+
+    reports_group = parser.add_argument_group("reports and session evidence")
+    reports_group.add_argument("--report-json", help="Save an execution report as JSON metadata.")
+    reports_group.add_argument("--report-html", help="Save an execution report as a self-contained HTML file.")
+    reports_group.add_argument("--save-session", help="Save request, curl, response headers/body, and metadata in a directory.")
+    reports_group.add_argument("--no-redact-reports", action="store_true", help="Do not redact sensitive metadata in JSON/HTML reports.")
+
+    ux_group = parser.add_argument_group("color and interactive mode")
+    color_group = ux_group.add_mutually_exclusive_group()
+    color_group.add_argument("--color", nargs="?", const="always", choices=sorted(COLOR_MODES), help="ANSI color mode: auto, always, or never. Using --color without a value equals always.")
+    color_group.add_argument("--no-color", action="store_true", help="Disable ANSI colors.")
+    ux_group.add_argument("-i", "--interactive", action="store_true", help="Interactive mode to build the request step by step.")
+    return parser
+
+
+def resolve_body_from_args(args: argparse.Namespace, cfg: dict[str, Any], raw_data: RawRequestData, headers: dict[str, str]) -> tuple[bytes | str | None, list[MultipartPart]]:
+    multipart = [parse_multipart_item(item) for item in args.multipart]
+    if multipart:
+        return None, multipart
+
+    payload_file_path = args.payload_file or get_config_str(cfg, "payload_file")
+    body: bytes | str | None
+    if args.json_file:
+        text = read_text_file(args.json_file)
+        try:
+            json.loads(text)
+        except json.JSONDecodeError as exc:
+            die(f"Invalid JSON file {args.json_file}: {exc}")
+        body = text
+        if not has_header(headers, "Content-Type"):
+            headers["Content-Type"] = "application/json"
+    elif args.json_body is not None:
+        try:
+            json.loads(args.json_body)
+        except json.JSONDecodeError as exc:
+            die(f"Invalid JSON body: {exc}")
+        body = args.json_body
+        if not has_header(headers, "Content-Type"):
+            headers["Content-Type"] = "application/json"
+    elif args.form_file:
+        body = read_text_file(args.form_file)
+        if not has_header(headers, "Content-Type"):
+            headers["Content-Type"] = "application/x-www-form-urlencoded"
+    elif args.form is not None:
+        body = args.form
+        if not has_header(headers, "Content-Type"):
+            headers["Content-Type"] = "application/x-www-form-urlencoded"
+    elif args.binary_file:
+        body = read_bytes_file(args.binary_file)
+    elif args.payload_file:
+        body = read_bytes_file(args.payload_file)
+    elif args.payload is not None:
+        body = args.payload
+    elif raw_data.body:
+        body = raw_data.body
+    elif payload_file_path:
+        body = read_bytes_file(payload_file_path)
+    else:
+        body = get_config_str(cfg, "payload", "")
+
+    if args.replace_body:
+        if isinstance(body, bytes):
+            try:
+                body_text = body.decode("utf-8")
+            except UnicodeDecodeError:
+                die("--replace-body can only be used with UTF-8/text bodies")
+        else:
+            body_text = "" if body is None else str(body)
+        for item in args.replace_body:
+            if "=" not in item:
+                die(f"Invalid --replace-body value, use old=new: {item!r}")
+            old, new = item.split("=", 1)
+            body_text = body_text.replace(old, new)
+        body = body_text
+    return body, multipart
+
+
+def resolve_config(args: argparse.Namespace) -> RequestConfig:
+    cfg_file = load_config(args.config)
+    cfg = {**DEFAULTS, **cfg_file}
+
+    variables: dict[str, str] = {}
+    if args.vars_file:
+        variables.update(load_vars_file(args.vars_file))
+    variables.update(parse_var_args(args.var))
+
+    raw_data = RawRequestData()
+    if args.raw_request:
+        raw_data = parse_raw_http_request_file(args.raw_request, args.raw_scheme, url_override=args.url or "")
+
+    headers_from_config = cfg.get("headers") if isinstance(cfg.get("headers"), dict) else {}
+    cookies_from_config = cfg.get("cookies") if isinstance(cfg.get("cookies"), dict) else {}
+
+    headers_file_path = args.headers_file or get_config_str(cfg, "headers_file")
+    explicit_cookies_file = args.load_cookies or args.cookies_file or get_config_str(cfg, "cookies_file")
+    if args.cookie_jar and Path(args.cookie_jar).expanduser().is_file():
+        cookies_file_path = args.cookie_jar
+    else:
+        cookies_file_path = explicit_cookies_file
+
+    headers_from_file = parse_headers(read_text_file(headers_file_path)) if headers_file_path else {}
+    headers_from_args = [parse_headers(chunk) for chunk in collect_argument_chunks(args.headers)]
+    cookies_from_file = parse_cookies(read_text_file(cookies_file_path)) if cookies_file_path else {}
+    cookies_from_args = [parse_cookies(chunk) for chunk in collect_argument_chunks(args.cookies)]
+
+    headers = merge_dicts(headers_from_config, raw_data.headers, headers_from_file, *headers_from_args)
+
+    # Normalize an explicit Cookie header into the cookie jar so --set-cookie and
+    # --remove-cookie can modify raw/cURL/imported requests predictably.
+    cookie_header_value = ""
+    for key in list(headers.keys()):
+        if key.lower() == "cookie":
+            cookie_header_value = headers.pop(key)
+            break
+    cookies_from_header = parse_cookies(cookie_header_value) if cookie_header_value else {}
+    cookies = merge_dicts(cookies_from_config, cookies_from_header, cookies_from_file, *cookies_from_args)
+
+    for name in args.remove_header:
+        remove_header_case_insensitive(headers, name)
+    for chunk in args.set_header:
+        headers.update(parse_headers(chunk))
+
+    for name in args.remove_cookie:
+        cookies.pop(name, None)
+    for chunk in args.set_cookie:
+        cookies.update(parse_cookies(chunk))
+
+    user_agent = args.user_agent if args.user_agent is not None else get_config_str(cfg, "user_agent", DEFAULTS["user_agent"])
+    if args.user_agent is not None and user_agent:
+        headers["User-Agent"] = user_agent
+    elif user_agent and not has_header(headers, "User-Agent"):
+        headers["User-Agent"] = user_agent
+
+    method = (args.method or raw_data.method or get_config_str(cfg, "method", "GET")).upper()
+    if method not in ALLOWED_METHODS:
+        die(f"Unsupported method: {method}. Allowed: {', '.join(sorted(ALLOWED_METHODS))}")
+
+    url = args.url or raw_data.url or ""
+    if variables and url:
+        url = apply_vars_text(url, variables)
+    set_query_values = [apply_vars_text(item, variables) for item in args.set_query] if variables else args.set_query
+    remove_query_values = [apply_vars_text(item, variables) for item in args.remove_query] if variables else args.remove_query
+    if set_query_values or remove_query_values:
+        url = update_query(url, set_query_values, remove_query_values)
+    if not url:
+        die("Missing --url. The URL is not defined in the config for operational safety.")
+    validate_url(url)
+
+    headers = apply_vars_mapping(headers, variables)
+    cookies = apply_vars_mapping(cookies, variables)
+    payload, multipart = resolve_body_from_args(args, cfg, raw_data, headers)
+    if variables and isinstance(payload, str):
+        payload = apply_vars_text(payload, variables)
+
+    try:
+        timeout = args.timeout if args.timeout is not None else float(get_config_str(cfg, "timeout", str(DEFAULTS["timeout"])))
+    except ValueError:
+        die("timeout must be numeric")
+    if timeout <= 0:
+        die("--timeout must be greater than 0")
+
+    overrides: dict[str, bool] = getattr(args, "_interactive_overrides", {})
+    follow_redirects = overrides.get("follow_redirects", False if args.no_redirects else parse_bool(cfg.get("follow_redirects", True)))
+    verify_tls = overrides.get("verify_tls", False if args.insecure else parse_bool(cfg.get("verify_tls", True)))
+    include_response_headers = overrides.get("include_response_headers", True if args.include else parse_bool(cfg.get("include_response_headers", False)))
+    show_request = overrides.get("show_request", True if args.show_request else parse_bool(cfg.get("show_request", False)))
+    dry_run = overrides.get("dry_run", True if args.dry_run else parse_bool(cfg.get("dry_run", False)))
+    output = args.output if args.output is not None else get_config_str(cfg, "output")
+    proxy = args.proxy if args.proxy is not None else get_config_str(cfg, "proxy")
+    pretty_json = overrides.get("pretty_json", False if args.raw else parse_bool(cfg.get("pretty_json", True)))
+    show_logo = overrides.get("show_logo", False if args.no_logo else parse_bool(cfg.get("show_logo", True)))
+    show_redirect_chain = overrides.get("show_redirect_chain", True if args.show_redirect_chain else parse_bool(cfg.get("show_redirect_chain", False)))
+    no_env_proxy = True if args.no_env_proxy else parse_bool(cfg.get("no_env_proxy", False))
+    color_mode = normalize_color_mode(getattr(args, "_interactive_color_mode", None) or ("never" if getattr(args, "no_color", False) else None) or getattr(args, "color", None) or cfg.get("color", DEFAULTS["color"]))
+    color_enabled = should_use_color(color_mode)
+
+    save_cookies = args.save_cookies or args.cookie_jar or ""
+    browser = True if args.browser else parse_bool(cfg.get("browser", False))
+    browser_engine = args.browser_engine or get_config_str(cfg, "browser_engine", DEFAULTS["browser_engine"])
+    if browser_engine not in {"chromium", "firefox", "webkit"}:
+        die("browser_engine must be chromium, firefox, or webkit")
+    browser_headless = False if args.browser_headed else parse_bool(cfg.get("browser_headless", True))
+    browser_wait_until = args.browser_wait_until or get_config_str(cfg, "browser_wait_until", DEFAULTS["browser_wait_until"])
+    if browser_wait_until not in {"commit", "domcontentloaded", "load", "networkidle"}:
+        die("browser_wait_until must be commit, domcontentloaded, load, or networkidle")
+    try:
+        browser_wait_ms = args.browser_wait_ms if args.browser_wait_ms is not None else int(get_config_str(cfg, "browser_wait_ms", "0"))
+    except ValueError:
+        die("browser_wait_ms must be an integer")
+    if browser_wait_ms < 0 or browser_wait_ms > 600000:
+        die("--browser-wait-ms must be between 0 and 600000")
+    browser_viewport = args.browser_viewport or get_config_str(cfg, "browser_viewport", DEFAULTS["browser_viewport"])
+    browser_storage_state = args.browser_storage_state or get_config_str(cfg, "browser_storage_state")
+    save_browser_storage = args.save_browser_storage or get_config_str(cfg, "save_browser_storage")
+    browser_executable = args.browser_executable or get_config_str(cfg, "browser_executable")
+
+    return RequestConfig(
+        method=method,
+        url=url,
+        user_agent=user_agent,
+        headers=headers,
+        cookies=cookies,
+        payload=payload,
+        multipart=multipart,
+        timeout=timeout,
+        follow_redirects=follow_redirects,
+        verify_tls=verify_tls,
+        include_response_headers=include_response_headers,
+        show_request=show_request,
+        dry_run=dry_run,
+        output=output,
+        proxy=proxy,
+        pretty_json=pretty_json,
+        show_logo=show_logo,
+        color_mode=color_mode,
+        color_enabled=color_enabled,
+        show_redirect_chain=show_redirect_chain,
+        no_env_proxy=no_env_proxy,
+        save_cookies=save_cookies,
+        save_prepared_request=args.save_prepared_request or "",
+        export_curl=bool(args.export_curl),
+        export_python=bool(args.export_python),
+        report_json=args.report_json or "",
+        report_html=args.report_html or "",
+        save_session=args.save_session or "",
+        redact_reports=not bool(args.no_redact_reports),
+        browser=browser,
+        browser_engine=browser_engine,
+        browser_headless=browser_headless,
+        browser_wait_until=browser_wait_until,
+        browser_wait_selector=args.browser_wait_selector or get_config_str(cfg, "browser_wait_selector"),
+        browser_wait_ms=browser_wait_ms,
+        browser_viewport=browser_viewport,
+        browser_storage_state=browser_storage_state,
+        save_browser_storage=save_browser_storage,
+        browser_executable=browser_executable,
+    )
+
+
+def build_session(cfg: RequestConfig) -> requests.Session:
+    session = requests.Session()
+    session.trust_env = not cfg.no_env_proxy
+    if cfg.cookies:
+        session.cookies.update(cfg.cookies)
+    return session
+
+
+def make_files_and_data(cfg: RequestConfig) -> tuple[Any, Any]:
+    if not cfg.multipart:
+        return None, None
+    files: list[tuple[str, Any]] = []
+    data: dict[str, str] = {}
+    for part in cfg.multipart:
+        if part.filename:
+            if part.content_type:
+                files.append((part.name, (part.filename, part.value, part.content_type)))
+            else:
+                files.append((part.name, (part.filename, part.value)))
+        else:
+            data[part.name] = part.value.decode("utf-8", errors="replace") if isinstance(part.value, bytes) else str(part.value)
+    return files or None, data or None
+
