@@ -1,0 +1,334 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""Professional web interface for ForgRequest.
+
+The web UI is a local operator console. It does not crawl, scan, or discover
+URLs. Every action maps to the same CLI engine used by forgrequest.
+"""
+from __future__ import annotations
+
+import argparse
+import contextlib
+import html
+import io
+import json
+import os
+import tempfile
+import threading
+import time
+import webbrowser
+from http import HTTPStatus
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from typing import Any
+from urllib.parse import quote, unquote, urlparse
+
+from . import cli
+
+DEFAULT_WEB_PORT = 7413
+MAX_REQUEST_BYTES = 5 * 1024 * 1024
+
+
+def _split_lines(value: str | None) -> list[str]:
+    if not value:
+        return []
+    return [line.strip() for line in value.replace("\r", "").split("\n") if line.strip()]
+
+
+def _safe_name(name: str) -> str:
+    cleaned = "".join(ch if ch.isalnum() or ch in {"-", "_", "."} else "_" for ch in name).strip("._")
+    return cleaned or "artifact"
+
+
+class ForgRequestWebApp:
+    def __init__(self, host: str, port: int, workspace: str | Path):
+        self.host = host
+        self.port = port
+        self.workspace = Path(workspace).expanduser().resolve()
+        self.workspace.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.Lock()
+
+    def new_job_dir(self) -> Path:
+        with self._lock:
+            stamp = time.strftime("%Y%m%d-%H%M%S")
+            # tempfile.mkdtemp adds a collision-resistant suffix. The previous
+            # millisecond-based name could collide when jobs were created quickly.
+            return Path(tempfile.mkdtemp(prefix=f"job-{stamp}-", dir=self.workspace))
+
+    def artifact_url(self, path: Path) -> str:
+        rel = path.resolve().relative_to(self.workspace)
+        return "/artifacts/" + quote(str(rel).replace(os.sep, "/"))
+
+    def build_cli_args(self, payload: dict[str, Any], job_dir: Path) -> tuple[list[str], dict[str, Any]]:
+        args: list[str] = []
+        artifacts: dict[str, Path] = {}
+
+        def add_flag(flag: str, enabled: bool) -> None:
+            if enabled:
+                args.append(flag)
+
+        def add_value(flag: str, value: Any) -> None:
+            if value is not None and str(value).strip() != "":
+                args.extend([flag, str(value)])
+
+        def write_temp_file(name: str, content: str | bytes) -> Path:
+            path = job_dir / _safe_name(name)
+            if isinstance(content, bytes):
+                path.write_bytes(content)
+            else:
+                path.write_text(content, encoding="utf-8")
+            return path
+
+        # The web console always keeps CLI output clean and readable.
+        args.extend(["--no-logo", "--no-color"])
+
+        if str(payload.get("configPath") or "").strip():
+            args.extend(["--config", str(payload.get("configPath")).strip()])
+        if bool(payload.get("initConfig")):
+            init_path = job_dir / "forgrequest.generated.config"
+            artifacts["forgrequest.generated.config"] = init_path
+            args.extend(["--init-config", "--config", str(init_path)])
+
+        request_mode = str(payload.get("requestMode") or "builder")
+        url = str(payload.get("url") or "").strip()
+        method = str(payload.get("method") or "").strip().upper()
+
+        if request_mode == "raw":
+            raw_text = str(payload.get("rawRequest") or "")
+            if raw_text.strip():
+                raw_path = write_temp_file("request.raw", raw_text)
+                args.extend(["--raw-request", str(raw_path)])
+            add_value("--raw-scheme", payload.get("rawScheme") or "https")
+            if url:
+                args.extend(["--url", url])
+        elif request_mode == "curl":
+            curl_text = str(payload.get("curlCommand") or "")
+            if curl_text.strip():
+                curl_path = write_temp_file("request.curl.input", curl_text)
+                args.extend(["--from-curl", str(curl_path)])
+            if url:
+                args.extend(["--url", url])
+            if method:
+                args.extend(["--method", method])
+        else:
+            add_value("--url", url)
+            add_value("--method", method)
+
+        add_value("--user-agent", payload.get("userAgent"))
+        for line in _split_lines(payload.get("headersText")):
+            args.extend(["--headers", line])
+        if str(payload.get("headersFileText") or "").strip():
+            path = write_temp_file("headers.txt", str(payload.get("headersFileText")))
+            args.extend(["--headers-file", str(path)])
+        for line in _split_lines(payload.get("setHeaders")):
+            args.extend(["--set-header", line])
+        for line in _split_lines(payload.get("removeHeaders")):
+            args.extend(["--remove-header", line])
+
+        for line in _split_lines(payload.get("cookiesText")):
+            args.extend(["--cookies", line])
+        if str(payload.get("cookiesFileText") or "").strip():
+            path = write_temp_file("cookies.txt", str(payload.get("cookiesFileText")))
+            args.extend(["--cookies-file", str(path)])
+        if str(payload.get("loadCookiesText") or "").strip():
+            path = write_temp_file("load-cookies.txt", str(payload.get("loadCookiesText")))
+            args.extend(["--load-cookies", str(path)])
+        for line in _split_lines(payload.get("setCookies")):
+            args.extend(["--set-cookie", line])
+        for line in _split_lines(payload.get("removeCookies")):
+            args.extend(["--remove-cookie", line])
+
+        for line in _split_lines(payload.get("setQuery")):
+            args.extend(["--set-query", line])
+        for line in _split_lines(payload.get("removeQuery")):
+            args.extend(["--remove-query", line])
+
+        body_mode = str(payload.get("bodyMode") or "none")
+        body_text = str(payload.get("bodyText") or "")
+        if body_mode == "payload" and body_text != "":
+            args.extend(["--payload", body_text])
+        elif body_mode == "json" and body_text != "":
+            args.extend(["--json", body_text])
+        elif body_mode == "json-file" and body_text != "":
+            path = write_temp_file("payload.json", body_text)
+            args.extend(["--json-file", str(path)])
+        elif body_mode == "form" and body_text != "":
+            args.extend(["--form", body_text])
+        elif body_mode == "form-file" and body_text != "":
+            path = write_temp_file("form.txt", body_text)
+            args.extend(["--form-file", str(path)])
+        elif body_mode == "payload-file" and body_text != "":
+            path = write_temp_file("payload.body", body_text)
+            args.extend(["--payload-file", str(path)])
+        elif body_mode == "binary-file" and body_text != "":
+            path = write_temp_file("payload.bin", body_text.encode("utf-8"))
+            args.extend(["--binary-file", str(path)])
+        elif body_mode == "multipart":
+            for line in _split_lines(body_text):
+                args.extend(["--multipart", line])
+
+        for line in _split_lines(payload.get("replaceBody")):
+            args.extend(["--replace-body", line])
+        for line in _split_lines(payload.get("variables")):
+            args.extend(["--var", line])
+        if str(payload.get("varsFileText") or "").strip():
+            path = write_temp_file("vars.env", str(payload.get("varsFileText")))
+            args.extend(["--vars-file", str(path)])
+
+        add_value("--timeout", payload.get("timeout"))
+        add_value("--proxy", payload.get("proxy"))
+        add_flag("--include", bool(payload.get("include")))
+        add_flag("--show-request", bool(payload.get("showRequest")))
+        add_flag("--dry-run", bool(payload.get("dryRun")))
+        add_flag("--raw", bool(payload.get("rawOutput")))
+        add_flag("--no-redirects", bool(payload.get("noRedirects")))
+        add_flag("--show-redirect-chain", bool(payload.get("showRedirectChain")))
+        add_flag("--insecure", bool(payload.get("insecure")))
+        add_flag("--no-env-proxy", bool(payload.get("noEnvProxy")))
+        add_flag("--no-redact-reports", bool(payload.get("noRedactReports")))
+
+        if str(payload.get("engineMode") or "http") == "browser":
+            args.append("--browser")
+            add_value("--browser-engine", payload.get("browserEngine") or "chromium")
+            add_flag("--browser-headed", bool(payload.get("browserHeaded")))
+            add_value("--browser-wait-until", payload.get("browserWaitUntil") or "networkidle")
+            add_value("--browser-wait-selector", payload.get("browserWaitSelector"))
+            add_value("--browser-wait-ms", payload.get("browserWaitMs"))
+            add_value("--browser-viewport", payload.get("browserViewport") or "1366x768")
+            add_value("--browser-executable", payload.get("browserExecutable"))
+            storage_text = str(payload.get("browserStorageText") or "").strip()
+            if storage_text:
+                storage_path = write_temp_file("browser-storage-state.input.json", storage_text)
+                args.extend(["--browser-storage-state", str(storage_path)])
+            if bool(payload.get("saveBrowserStorage")):
+                storage_output = job_dir / "browser-storage-state.json"
+                artifacts["browser-storage-state.json"] = storage_output
+                args.extend(["--save-browser-storage", str(storage_output)])
+
+        if bool(payload.get("exportCurl")):
+            args.append("--export-curl")
+        if bool(payload.get("exportPython")):
+            args.append("--export-python")
+        if bool(payload.get("savePreparedRequest")):
+            path = job_dir / "prepared-request.raw"
+            artifacts["prepared-request.raw"] = path
+            args.extend(["--save-prepared-request", str(path)])
+        if bool(payload.get("saveOutput")):
+            path = job_dir / "response.body"
+            artifacts["response.body"] = path
+            args.extend(["--output", str(path)])
+        if bool(payload.get("saveCookies")):
+            path = job_dir / "cookies.txt"
+            artifacts["cookies.txt"] = path
+            args.extend(["--save-cookies", str(path)])
+        if bool(payload.get("cookieJar")):
+            path = job_dir / "cookie-jar.txt"
+            if str(payload.get("cookieJarText") or "").strip():
+                path.write_text(str(payload.get("cookieJarText")), encoding="utf-8")
+            artifacts["cookie-jar.txt"] = path
+            args.extend(["--cookie-jar", str(path)])
+        if bool(payload.get("reportJson")):
+            path = job_dir / "report.json"
+            artifacts["report.json"] = path
+            args.extend(["--report-json", str(path)])
+        if bool(payload.get("reportHtml")):
+            path = job_dir / "report.html"
+            artifacts["report.html"] = path
+            args.extend(["--report-html", str(path)])
+        if bool(payload.get("saveSession")):
+            path = job_dir / "session"
+            artifacts["session"] = path
+            args.extend(["--save-session", str(path)])
+
+        return args, artifacts
+
+    def run_cli(self, payload: dict[str, Any]) -> dict[str, Any]:
+        job_dir = self.new_job_dir()
+        args, planned_artifacts = self.build_cli_args(payload, job_dir)
+        out = io.StringIO()
+        err = io.StringIO()
+        exit_code = 0
+        started = time.perf_counter()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            try:
+                exit_code = int(cli.main(args))
+            except SystemExit as exc:
+                try:
+                    exit_code = int(exc.code or 0)
+                except (TypeError, ValueError):
+                    exit_code = 1
+            except Exception as exc:  # defensive guard for web mode
+                exit_code = 1
+                print(f"[!] Unexpected web execution error: {exc}", file=err)
+        elapsed = time.perf_counter() - started
+        artifacts = []
+        for path in sorted(job_dir.rglob("*")):
+            if path.is_file():
+                artifacts.append({
+                    "name": str(path.relative_to(job_dir)),
+                    "url": self.artifact_url(path),
+                    "size": path.stat().st_size,
+                })
+        # Include planned directories even when they only contain files listed above.
+        for name, path in planned_artifacts.items():
+            if path.is_dir():
+                artifacts.append({"name": name + "/", "url": self.artifact_url(path), "size": 0})
+        return {
+            "exit_code": exit_code,
+            "elapsed_seconds": round(elapsed, 4),
+            "command": "forgrequest " + " ".join(cli.shlex.quote(part) for part in args),
+            "stdout": out.getvalue(),
+            "stderr": err.getvalue(),
+            "artifacts": artifacts,
+            "job": job_dir.name,
+        }
+
+    def run_diff(self, payload: dict[str, Any]) -> dict[str, Any]:
+        job_dir = self.new_job_dir()
+        left = job_dir / "left.txt"
+        right = job_dir / "right.txt"
+        left.write_text(str(payload.get("left") or ""), encoding="utf-8")
+        right.write_text(str(payload.get("right") or ""), encoding="utf-8")
+        json_path = job_dir / "diff.json"
+        args = ["diff", str(left), str(right), "--json", str(json_path)]
+        if payload.get("noBodyDiff"):
+            args.append("--no-body-diff")
+        if payload.get("context"):
+            args.extend(["--context", str(payload.get("context"))])
+        out = io.StringIO()
+        err = io.StringIO()
+        exit_code = 0
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            try:
+                exit_code = int(cli.main(args))
+            except SystemExit as exc:
+                try:
+                    exit_code = int(exc.code or 0)
+                except (TypeError, ValueError):
+                    exit_code = 1
+        artifacts = []
+        for path in sorted(job_dir.rglob("*")):
+            if path.is_file():
+                artifacts.append({"name": path.name, "url": self.artifact_url(path), "size": path.stat().st_size})
+        return {
+            "exit_code": exit_code,
+            "command": "forgrequest " + " ".join(cli.shlex.quote(part) for part in args),
+            "stdout": out.getvalue(),
+            "stderr": err.getvalue(),
+            "artifacts": artifacts,
+            "job": job_dir.name,
+        }
+
+
+INDEX_HTML = r'''<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ForgRequest Web Console</title>
+<style>
+:root{
+  --bg:#050b14;--bg-alt:#091322;--panel:#0d192a;--panel-2:#101f33;--panel-3:#071220;
+  --line:#20364f;--line-strong:#2c4a69;--text:#eaf5ff;--muted:#8fa4b9;--muted-2:#667f98;
+  --accent:#38d7d0;--accent-2:#7cf4da;--accent-soft:rgba(56,215,208,.12);
+  --blue:#5ba7ff;--ok:#70d98b;--warn:#ffd166;--danger:#ff6f91;
