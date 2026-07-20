@@ -1,0 +1,475 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Forgery HTTP Request - advanced HTTP client for authorized request replay.
+Signature: imr
+
+Design boundary: this is not a crawler or vulnerability scanner. It prepares,
+modifies, replays, compares, and records HTTP requests/responses for manual,
+authorized testing.
+"""
+from __future__ import annotations
+
+import argparse
+import configparser
+import difflib
+import html
+import json
+import os
+import re
+import shlex
+import subprocess
+import sys
+import time
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Optional
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
+
+try:
+    import requests
+except ImportError:  # pragma: no cover
+    print("[!] Missing dependency: requests", file=sys.stderr)
+    print("    Install with: python -m pip install requests", file=sys.stderr)
+    raise SystemExit(2)
+
+VERSION = "1.8.0"
+SIGNATURE = "imr"
+
+ALLOWED_METHODS = {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "TRACE"}
+COLOR_MODES = {"auto", "always", "never"}
+LOGO_COLOR = "cyan"
+MAX_PRINT_BODY_CHARS = 20000
+MAX_REQUEST_BODY_PREVIEW = 4096
+
+SENSITIVE_KEYS = {
+    "authorization",
+    "cookie",
+    "set-cookie",
+    "x-api-key",
+    "api-key",
+    "proxy-authorization",
+    "x-auth-token",
+    "x-csrf-token",
+    "x-xsrf-token",
+}
+SENSITIVE_NAME_PATTERNS = re.compile(
+    r"(pass(word)?|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|session|jwt|bearer|auth|credential)",
+    re.IGNORECASE,
+)
+COOKIE_ATTRS = {"path", "domain", "expires", "max-age", "samesite", "secure", "httponly"}
+HEADER_NAME_RE = r"[!#$%&'*+.^_`|~0-9A-Za-z-]+"
+HEADER_SEPARATOR_RE = re.compile(rf";(?=\s*{HEADER_NAME_RE}\s*:)")
+VARIABLE_RE = re.compile(r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}")
+
+ANSI_STYLES = {
+    "reset": "\033[0m",
+    "bold": "\033[1m",
+    "dim": "\033[2m",
+    "cyan": "\033[38;5;80m",
+    "blue": "\033[38;5;75m",
+    "green": "\033[38;5;114m",
+    "yellow": "\033[38;5;186m",
+    "red": "\033[38;5;174m",
+    "gray": "\033[38;5;245m",
+}
+
+LOGO = rf"""
+        ███████╗ ██████╗ ██████╗  ██████╗ 
+        ██╔════╝██╔═══██╗██╔══██╗██╔════╝ 
+        █████╗  ██║   ██║██████╔╝██║  ███╗
+        ██╔══╝  ██║   ██║██╔══██╗██║   ██║
+        ██║     ╚██████╔╝██║  ██║╚██████╔╝
+        ╚═╝      ╚═════╝ ╚═╝  ╚═╝ ╚═════╝ 
+
+        ██████╗ ███████╗ ██████╗ ██╗   ██╗███████╗███████╗████████╗
+        ██╔══██╗██╔════╝██╔═══██╗██║   ██║██╔════╝██╔════╝╚══██╔══╝
+        ██████╔╝█████╗  ██║   ██║██║   ██║█████╗  ███████╗   ██║   
+        ██╔══██╗██╔══╝  ██║▄▄ ██║██║   ██║██╔══╝  ╚════██║   ██║   
+        ██║  ██║███████╗╚██████╔╝╚██████╔╝███████╗███████║   ██║   
+        ╚═╝  ╚═╝╚══════╝ ╚══▀▀═╝  ╚═════╝ ╚══════╝╚══════╝   ╚═╝   
+
+             Forgery HTTP Request v{VERSION}  ::  signature: {SIGNATURE}
+"""
+
+DEFAULTS: dict[str, Any] = {
+    "method": "GET",
+    "user_agent": f"ForgeryHTTP/{VERSION} ({SIGNATURE})",
+    "headers": {},
+    "cookies": {},
+    "headers_file": "",
+    "cookies_file": "",
+    "payload": "",
+    "payload_file": "",
+    "timeout": 30.0,
+    "follow_redirects": True,
+    "verify_tls": True,
+    "include_response_headers": False,
+    "show_request": False,
+    "dry_run": False,
+    "output": "",
+    "proxy": "",
+    "pretty_json": True,
+    "show_logo": True,
+    "color": "auto",
+    "interactive": False,
+    "show_redirect_chain": False,
+    "no_env_proxy": False,
+    "redact_reports": True,
+    "browser": False,
+    "browser_engine": "chromium",
+    "browser_headless": True,
+    "browser_wait_until": "networkidle",
+    "browser_wait_selector": "",
+    "browser_wait_ms": 0,
+    "browser_viewport": "1366x768",
+    "browser_storage_state": "",
+    "save_browser_storage": "",
+    "browser_executable": "",
+}
+
+SAMPLE_CONFIG = f'''# forgrequest.config
+# INI/.config format read with configparser from the Python standard library.
+# The URL must NOT be stored here. Always pass it as an argument: --url https://example.com
+
+[request]
+method = GET
+user_agent = ForgeryHTTP/{VERSION} ({SIGNATURE})
+timeout = 30
+follow_redirects = true
+verify_tls = true
+include_response_headers = false
+show_request = false
+dry_run = false
+output =
+proxy =
+pretty_json = true
+show_logo = true
+color = auto
+interactive = false
+show_redirect_chain = false
+no_env_proxy = false
+redact_reports = true
+browser = false
+browser_engine = chromium
+browser_headless = true
+browser_wait_until = networkidle
+browser_wait_selector =
+browser_wait_ms = 0
+browser_viewport = 1366x768
+browser_storage_state =
+save_browser_storage =
+browser_executable =
+
+# Optional defaults for loading values from files.
+# If you also pass CLI arguments, CLI values take priority.
+headers_file =
+cookies_file =
+payload_file =
+
+# Default payload. It may be one line or multiline if continuation lines are indented.
+payload =
+
+[headers]
+Accept = */*
+
+[cookies]
+# session = value
+'''
+
+
+@dataclass
+class RawRequestData:
+    method: str = ""
+    url: str = ""
+    headers: dict[str, str] = field(default_factory=dict)
+    body: bytes = b""
+
+
+@dataclass
+class MultipartPart:
+    name: str
+    value: str | bytes
+    filename: str | None = None
+    content_type: str | None = None
+
+
+@dataclass
+class RequestConfig:
+    method: str = DEFAULTS["method"]
+    url: str = ""
+    user_agent: str = DEFAULTS["user_agent"]
+    headers: dict[str, str] = field(default_factory=dict)
+    cookies: dict[str, str] = field(default_factory=dict)
+    payload: bytes | str | None = DEFAULTS["payload"]
+    multipart: list[MultipartPart] = field(default_factory=list)
+    timeout: float = DEFAULTS["timeout"]
+    follow_redirects: bool = DEFAULTS["follow_redirects"]
+    verify_tls: bool = DEFAULTS["verify_tls"]
+    include_response_headers: bool = DEFAULTS["include_response_headers"]
+    show_request: bool = DEFAULTS["show_request"]
+    dry_run: bool = DEFAULTS["dry_run"]
+    output: str = DEFAULTS["output"]
+    proxy: str = DEFAULTS["proxy"]
+    pretty_json: bool = DEFAULTS["pretty_json"]
+    show_logo: bool = DEFAULTS["show_logo"]
+    color_mode: str = DEFAULTS["color"]
+    color_enabled: bool = False
+    show_redirect_chain: bool = DEFAULTS["show_redirect_chain"]
+    no_env_proxy: bool = DEFAULTS["no_env_proxy"]
+    save_cookies: str = ""
+    save_prepared_request: str = ""
+    export_curl: bool = False
+    export_python: bool = False
+    report_json: str = ""
+    report_html: str = ""
+    save_session: str = ""
+    redact_reports: bool = DEFAULTS["redact_reports"]
+    browser: bool = DEFAULTS["browser"]
+    browser_engine: str = DEFAULTS["browser_engine"]
+    browser_headless: bool = DEFAULTS["browser_headless"]
+    browser_wait_until: str = DEFAULTS["browser_wait_until"]
+    browser_wait_selector: str = DEFAULTS["browser_wait_selector"]
+    browser_wait_ms: int = DEFAULTS["browser_wait_ms"]
+    browser_viewport: str = DEFAULTS["browser_viewport"]
+    browser_storage_state: str = DEFAULTS["browser_storage_state"]
+    save_browser_storage: str = DEFAULTS["save_browser_storage"]
+    browser_executable: str = DEFAULTS["browser_executable"]
+
+
+@dataclass
+class ExecutionResult:
+    response: Any | None
+    elapsed: float
+    body_complete: bool
+    warning: str | None
+    prepared: requests.PreparedRequest
+    request_raw: str
+    request_curl: str
+    request_python: str
+    engine_metadata: dict[str, Any] = field(default_factory=dict)
+
+
+
+
+class HelpFormatter(argparse.ArgumentDefaultsHelpFormatter, argparse.RawDescriptionHelpFormatter):
+    """Show default values while preserving explicit help layout and examples."""
+
+def die(message: str, code: int = 1) -> None:
+    print(f"[!] {message}", file=sys.stderr)
+    raise SystemExit(code)
+
+
+def find_default_config_file() -> str:
+    env_config = os.getenv("FORGREQUEST_CONFIG")
+    candidates: list[Path] = []
+    if env_config:
+        candidates.append(Path(env_config).expanduser())
+    current = Path(__file__).resolve()
+    candidates.extend(
+        [
+            Path.cwd() / "forgrequest.config",
+            current.parent / "forgrequest.config",
+            current.parents[2] / "config" / "forgrequest.config" if len(current.parents) >= 3 else Path("forgrequest.config"),
+            Path.home() / ".config" / "forgrequest" / "forgrequest.config",
+        ]
+    )
+    for candidate in candidates:
+        if candidate and candidate.exists():
+            return str(candidate)
+    return "forgrequest.config"
+
+
+DEFAULT_CONFIG_FILE = find_default_config_file()
+
+
+def enable_windows_ansi() -> None:
+    if os.name != "nt":
+        return
+    try:
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.GetStdHandle(-11)
+        mode = ctypes.c_uint32()
+        if kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+            kernel32.SetConsoleMode(handle, mode.value | 0x0004)
+    except Exception:
+        return
+
+
+def normalize_color_mode(value: Any) -> str:
+    val = str(value or "auto").strip().lower()
+    aliases = {
+        "1": "always",
+        "true": "always",
+        "yes": "always",
+        "y": "always",
+        "on": "always",
+        "si": "always",
+        "0": "never",
+        "false": "never",
+        "no": "never",
+        "n": "never",
+        "off": "never",
+        "none": "never",
+    }
+    val = aliases.get(val, val)
+    if val not in COLOR_MODES:
+        die(f"Invalid color mode: {value!r}. Use auto, always, or never.")
+    return val
+
+
+def should_use_color(mode: str) -> bool:
+    mode = normalize_color_mode(mode)
+    if mode == "never":
+        return False
+    if mode == "always":
+        enable_windows_ansi()
+        return True
+    if os.getenv("NO_COLOR"):
+        return False
+    if os.getenv("FORCE_COLOR"):
+        enable_windows_ansi()
+        return True
+    enabled = sys.stdout.isatty()
+    if enabled:
+        enable_windows_ansi()
+    return enabled
+
+
+def style(text: Any, *names: str, enabled: bool = False) -> str:
+    value = str(text)
+    if not enabled:
+        return value
+    codes = "".join(ANSI_STYLES[name] for name in names if name in ANSI_STYLES)
+    return f"{codes}{value}{ANSI_STYLES['reset']}" if codes else value
+
+
+def render_logo(color_enabled: bool) -> str:
+    if not color_enabled:
+        return LOGO
+    return "\n".join(style(line, LOGO_COLOR, "bold", enabled=True) if line.strip() else line for line in LOGO.splitlines())
+
+
+def read_text_file(path: str | Path) -> str:
+    p = Path(path).expanduser()
+    if not p.is_file():
+        die(f"File not found: {p}")
+    try:
+        return p.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        return p.read_text(encoding="latin-1")
+    except OSError as exc:
+        die(f"Could not read {p}: {exc}")
+
+
+def read_bytes_file(path: str | Path) -> bytes:
+    p = Path(path).expanduser()
+    if not p.is_file():
+        die(f"File not found: {p}")
+    try:
+        return p.read_bytes()
+    except OSError as exc:
+        die(f"Could not read {p}: {exc}")
+
+
+def write_text(path: str | Path, content: str) -> None:
+    p = Path(path).expanduser()
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(content, encoding="utf-8")
+    except OSError as exc:
+        die(f"Could not write {p}: {exc}")
+
+
+def write_bytes(path: str | Path, content: bytes) -> None:
+    p = Path(path).expanduser()
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(content)
+    except OSError as exc:
+        die(f"Could not write {p}: {exc}")
+
+
+def parse_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    val = str(value).strip().lower()
+    if val in {"1", "true", "yes", "y", "on"}:
+        return True
+    if val in {"0", "false", "no", "n", "off"}:
+        return False
+    die(f"Invalid boolean value: {value!r}")
+
+
+def split_semicolon_aware(value: str) -> list[str]:
+    return [part.strip() for part in value.replace("\r", "").split(";") if part.strip()]
+
+
+def split_header_candidates(line: str) -> list[str]:
+    return [part.strip() for part in HEADER_SEPARATOR_RE.split(line.replace("\r", "")) if part.strip()]
+
+
+def parse_headers(raw: str) -> dict[str, str]:
+    headers: dict[str, str] = {}
+    text = raw.strip()
+    if not text:
+        return headers
+    if text.startswith("{"):
+        try:
+            obj = json.loads(text)
+        except json.JSONDecodeError as exc:
+            die(f"Invalid headers JSON: {exc}")
+        if not isinstance(obj, dict):
+            die('Headers JSON must be an object: {"Header": "value"}')
+        return {str(k): str(v) for k, v in obj.items()}
+
+    text = re.sub(r"(?:^|\s)-H\s+", "\n", text)
+    candidates: list[str] = []
+    for line in text.splitlines():
+        line = line.strip().strip("'\"")
+        if line:
+            candidates.extend(split_header_candidates(line))
+    for item in candidates:
+        item = item.strip().strip("'\"")
+        if not item:
+            continue
+        if ":" not in item:
+            die(f"Invalid header, use 'Name: value': {item!r}")
+        name, value = item.split(":", 1)
+        name = name.strip()
+        value = value.strip()
+        if not name:
+            die(f"Header with empty name: {item!r}")
+        if not re.fullmatch(HEADER_NAME_RE, name):
+            die(f"Invalid header name: {name!r}")
+        headers[name] = value
+    return headers
+
+
+def parse_netscape_cookie_line(line: str) -> Optional[tuple[str, str]]:
+    if not line or line.startswith("#"):
+        return None
+    parts = line.split("\t")
+    if len(parts) >= 7:
+        return parts[5].strip(), parts[6].strip()
+    return None
+
+
+def parse_cookies(raw: str) -> dict[str, str]:
+    cookies: dict[str, str] = {}
+    text = raw.strip()
+    if not text:
+        return cookies
+    if text.startswith("{"):
+        try:
+            obj = json.loads(text)
+        except json.JSONDecodeError as exc:
+            die(f"Invalid cookies JSON: {exc}")
+        if not isinstance(obj, dict):
+            die('Cookies JSON must be an object: {"name": "value"}')
+        return {str(k): str(v) for k, v in obj.items()}
