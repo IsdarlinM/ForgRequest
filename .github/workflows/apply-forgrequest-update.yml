@@ -1,7 +1,7 @@
 name: Apply ForgRequest release
 
 on:
-  push:
+  pull_request:
     branches:
       - main
     paths:
@@ -9,19 +9,22 @@ on:
 
 permissions:
   contents: write
+  pull-requests: read
 
 jobs:
   apply-release:
-    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
-      - name: Check out repository
+      - name: Check out pull request branch
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
 
       - name: Assemble release source
         shell: bash
         run: |
           set -Eeuo pipefail
+          test -f .forgrequest-update/ready
           shopt -s nullglob
           if [[ -d .forgrequest-update/parts ]]; then
             while IFS= read -r -d '' part_dir; do
@@ -56,7 +59,7 @@ jobs:
           test "$(grep -c 'data-run-request' src/forgrequest/webui.py)" -ge 1
           bash -n install/linux/install_linux.sh
 
-      - name: Commit release
+      - name: Commit validated release to pull request branch
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -66,5 +69,5 @@ jobs:
           if git diff --cached --quiet; then
             exit 0
           fi
-          git commit -m "Release ForgRequest v1.8.0 with streamlined documentation"
-          git push
+          git commit -m "Release ForgRequest v1.8.0 with streamlined documentation [skip ci]"
+          git push origin HEAD:${{ github.head_ref }}
