@@ -6,6 +6,8 @@ set "SCRIPT_DIR=%~dp0"
 set "INSTALL_DIR=%LOCALAPPDATA%\Programs\forgrequest"
 set "CONFIG_PATH=%INSTALL_DIR%\forgrequest.config"
 set "WRAPPER_PATH=%INSTALL_DIR%\forgrequest.cmd"
+set "VENV_DIR=%INSTALL_DIR%\.venv"
+set "VENV_PY=%VENV_DIR%\Scripts\python.exe"
 
 if /I "%~1"=="--uninstall" goto uninstall
 if /I "%~1"=="-Uninstall" goto uninstall
@@ -13,7 +15,6 @@ if /I "%~1"=="/uninstall" goto uninstall
 
 call :resolve_project_root
 if errorlevel 1 exit /b 1
-
 call :find_python
 if errorlevel 1 exit /b 1
 
@@ -31,30 +32,32 @@ if exist "%PROJECT_ROOT%\requirements.txt" copy /Y "%PROJECT_ROOT%\requirements.
 if exist "%PROJECT_ROOT%\README.md" copy /Y "%PROJECT_ROOT%\README.md" "%INSTALL_DIR%\README.md" >nul
 if exist "%PROJECT_ROOT%\pyproject.toml" copy /Y "%PROJECT_ROOT%\pyproject.toml" "%INSTALL_DIR%\pyproject.toml" >nul
 
+if not exist "%VENV_PY%" (
+  echo [+] Creating isolated Python environment: %VENV_DIR%
+  %PY_CMD% -m venv "%VENV_DIR%"
+  if errorlevel 1 (
+    echo [!] Could not create the ForgRequest virtual environment.
+    exit /b 1
+  )
+)
+
+echo [+] Installing ForgRequest dependencies inside its isolated environment...
+"%VENV_PY%" -m pip install -r "%INSTALL_DIR%\requirements.txt"
+if errorlevel 1 exit /b 1
+
 if not exist "%CONFIG_PATH%" (
   if exist "%PROJECT_ROOT%\config\forgrequest.config" (
     copy /Y "%PROJECT_ROOT%\config\forgrequest.config" "%CONFIG_PATH%" >nul
   ) else (
-    %PY_CMD% "%INSTALL_DIR%\forgrequest.py" --init-config -c "%CONFIG_PATH%"
+    "%VENV_PY%" "%INSTALL_DIR%\forgrequest.py" --init-config -c "%CONFIG_PATH%"
     if errorlevel 1 exit /b 1
   )
 )
 
-%PY_CMD% -c "import requests, playwright" >nul 2>nul
-if errorlevel 1 (
-  echo [+] Installing ForgRequest Python dependencies for the current user...
-  if exist "%INSTALL_DIR%\requirements.txt" (
-    %PY_CMD% -m pip install --user -r "%INSTALL_DIR%\requirements.txt"
-  ) else (
-    %PY_CMD% -m pip install --user requests
-  )
-  if errorlevel 1 exit /b 1
-)
-
-%PY_CMD% -c "import sys; sys.path.insert(0, r'%INSTALL_DIR%\src'); from forgrequest.browser import find_system_browser; raise SystemExit(0 if find_system_browser('chromium') else 1)" >nul 2>nul
+"%VENV_PY%" -c "import sys; sys.path.insert(0, r'%INSTALL_DIR%\src'); from forgrequest.browser import find_system_browser; raise SystemExit(0 if find_system_browser('chromium') else 1)" >nul 2>nul
 if errorlevel 1 (
   echo [+] Installing the Playwright Chromium runtime for JavaScript browser mode...
-  %PY_CMD% "%INSTALL_DIR%\forgrequest.py" browser-install chromium
+  "%VENV_PY%" "%INSTALL_DIR%\forgrequest.py" browser-install chromium
   if errorlevel 1 (
     echo [!] Chromium runtime installation failed. HTTP mode remains available.
     echo     Retry later with: forgrequest browser-install chromium
@@ -67,13 +70,12 @@ if errorlevel 1 (
   echo @echo off
   echo set "FORGREQUEST_CONFIG=%%~dp0forgrequest.config"
   echo set "FORGREQUEST_INSTALL_DIR=%%~dp0"
-  echo %PY_CMD% "%%~dp0forgrequest.py" %%*
+  echo "%%~dp0.venv\Scripts\python.exe" "%%~dp0forgrequest.py" %%*
 ) > "%WRAPPER_PATH%"
 
 call :ensure_user_path "%INSTALL_DIR%"
 if errorlevel 1 exit /b 1
-
-call "%WRAPPER_PATH%" --help >nul
+call "%WRAPPER_PATH%" --version >nul
 if errorlevel 1 (
   echo [!] Installation completed, but the command test failed.
   exit /b 1
@@ -82,6 +84,7 @@ if errorlevel 1 (
 echo [+] Installed successfully.
 echo [+] Command: forgrequest
 echo [+] Install dir: %INSTALL_DIR%
+echo [+] Python environment: %VENV_DIR%
 echo [+] Config:   %CONFIG_PATH%
 echo [+] PATH configured for future terminals.
 echo [+] Test:    forgrequest -u https://example.com --dry-run --no-logo
