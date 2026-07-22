@@ -10,10 +10,22 @@ chmod +x install/linux/install_linux.sh
 Default paths:
 
 ```text
-Application: ~/.local/share/forgrequest
-Config:      ~/.config/forgrequest/forgrequest.config
-Command:     ~/.local/bin/forgrequest
+Application:        ~/.local/share/forgrequest
+Python environment: ~/.local/share/forgrequest/.venv
+Config:             ~/.config/forgrequest/forgrequest.config
+Command:            ~/.local/bin/forgrequest
 ```
+
+The installer creates an application-owned Python virtual environment and installs ForgRequest dependencies inside it. It does not install packages into Kali/Debian's externally managed system Python and does not require `pip --user` or `--break-system-packages`.
+
+If virtual-environment support is missing on Kali/Debian, install it first:
+
+```bash
+apt update
+apt install python3-venv
+```
+
+`python3-full` is also suitable when a complete Python environment is desired.
 
 The installer automatically adds this line to common shell startup files when it is missing:
 
@@ -28,9 +40,13 @@ FORGREQUEST_CONFIG="$HOME/.config/forgrequest/forgrequest.config"
 FORGREQUEST_INSTALL_DIR="$HOME/.local/share/forgrequest"
 ```
 
-These variables allow the command to work immediately in new terminals and allow `forgrequest update` to locate the active installation safely.
+and executes ForgRequest with:
 
-The installer also installs the Playwright Python dependency. It uses an existing system Chromium/Chrome when available; otherwise it attempts to download the Playwright Chromium runtime. Browser setup can be retried with:
+```text
+~/.local/share/forgrequest/.venv/bin/python
+```
+
+The installer uses an existing system Chromium/Chrome when available; otherwise it attempts to install the Playwright Chromium runtime. Browser setup can be retried with:
 
 ```bash
 forgrequest browser-install chromium
@@ -42,7 +58,7 @@ Uninstall:
 ./install/linux/install_linux.sh --uninstall
 ```
 
-The uninstall action removes the command wrapper and application directory, but keeps the configuration directory. Delete `~/.config/forgrequest` manually if you also want to remove configuration.
+The uninstall action removes the command wrapper, application directory, and managed `.venv`, but keeps the configuration directory.
 
 Update after installation:
 
@@ -50,3 +66,12 @@ Update after installation:
 forgrequest update --dry-run
 forgrequest update --yes
 ```
+
+For an older installation that currently fails with `externally-managed-environment`, bootstrap the fixed updater without dependency installation first:
+
+```bash
+forgrequest update --no-deps --no-browser-runtime --yes
+forgrequest update --yes
+```
+
+The second command creates/migrates the managed `.venv`, installs dependencies there, and refreshes the command wrapper.
