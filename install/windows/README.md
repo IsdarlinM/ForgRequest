@@ -11,12 +11,19 @@ No PowerShell installer is required or shipped.
 Default paths:
 
 ```text
-Application: %LOCALAPPDATA%\Programs\forgrequest
-Config:      %LOCALAPPDATA%\Programs\forgrequest\forgrequest.config
-Command:     %LOCALAPPDATA%\Programs\forgrequest\forgrequest.cmd
+Application:        %LOCALAPPDATA%\Programs\forgrequest
+Python environment: %LOCALAPPDATA%\Programs\forgrequest\.venv
+Config:             %LOCALAPPDATA%\Programs\forgrequest\forgrequest.config
+Command:            %LOCALAPPDATA%\Programs\forgrequest\forgrequest.cmd
 ```
 
-The CMD installer updates the user environment through `HKCU\Environment`:
+The CMD installer creates an application-owned Python virtual environment, installs dependencies inside it, and makes the wrapper execute:
+
+```text
+%LOCALAPPDATA%\Programs\forgrequest\.venv\Scripts\python.exe
+```
+
+The installer updates the user environment through `HKCU\Environment`:
 
 ```text
 Path += %LOCALAPPDATA%\Programs\forgrequest
@@ -26,7 +33,7 @@ FORGREQUEST_INSTALL_DIR=%LOCALAPPDATA%\Programs\forgrequest
 
 Open a new terminal if the current terminal does not immediately detect `forgrequest`.
 
-The installer also installs the Playwright Python dependency. It uses an existing Chrome, Chromium, or Edge executable when available; otherwise it attempts to download the Playwright Chromium runtime.
+The installer uses an existing Chrome, Chromium, or Edge executable when available; otherwise it attempts to download the Playwright Chromium runtime.
 
 Retry browser setup when needed:
 
@@ -40,7 +47,7 @@ Uninstall:
 install\windows\install_windows.cmd --uninstall
 ```
 
-The uninstall action removes the application directory. If desired, remove the PATH entry manually from Environment Variables.
+The uninstall action removes the application directory, including the managed `.venv`. If desired, remove the PATH entry manually from Environment Variables.
 
 Update after installation:
 
@@ -48,3 +55,5 @@ Update after installation:
 forgrequest update --dry-run
 forgrequest update --yes
 ```
+
+The updater preserves local configuration/artifacts and refreshes `forgrequest.cmd` so it continues to use the managed `.venv` after an update.
